@@ -138,3 +138,6 @@ output
 wandb
 logs
 video_output
+
+# Large models
+checkpoint
