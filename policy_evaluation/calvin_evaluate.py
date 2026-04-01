@@ -146,7 +146,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
             description = " ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(success_rates)])
             description += f" Average: {average_rate:.1f} |"
             eval_sequences.set_description(description)
-        if result < 4 and record:
+        if result < cfg.record_ths and record:
             rollout_video._log_currentvideos_to_file(i, save_as_video=True)
 
     #if num_videos > 0:
@@ -162,7 +162,7 @@ def evaluate_sequence(
     robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
     env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
     if record:
-        caption = " | ".join(eval_sequence)
+        caption = " | ".join(eval_sequence) if cfg.use_caption else ""
         rollout_video.new_video(tag=get_video_tag(i), caption=caption)
     success_counter = 0
     if cfg.debug:
@@ -239,6 +239,9 @@ def main(cfg):
     print('train_folder',cfg.train_folder)
 
     for checkpoint in checkpoints:
+        if checkpoint is None:
+            print(f"No checkpoint found in {cfg.train_folder}")
+            continue
         print(cfg.device)
         env, _, lang_embeddings = get_default_beso_and_env(
             cfg.train_folder,
@@ -250,10 +253,8 @@ def main(cfg):
             device_id=cfg.device,
             cfg=cfg,
         )
-        ckpt_path = os.path.join(cfg.train_folder,'saved_models')
-
-        for file in os.listdir(ckpt_path):
-            ckpt = os.path.join(ckpt_path, file)
+        
+        ckpt = checkpoint
         print(f"Loading model from {ckpt}")
         state_dict = torch.load(ckpt, map_location='cpu')
         #print('state_dict_key:', state_dict['model'].keys())

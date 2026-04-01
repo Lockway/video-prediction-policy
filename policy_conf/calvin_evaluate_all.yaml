@@ -58,8 +58,8 @@ eval_cfg_overwrite:
     voltron_cache: /home/disk2/gyj/code/mdt_policy/pretrained_model_weights
 
 ep_len: 360
-num_sequences: 1000
-num_videos: 10
+num_sequences: 1  # Default: 1000
+num_videos: 1
 lang_embeddings: null
 render: False
 log_wandb: True
@@ -103,3 +103,6 @@ root_data_dir: /cephfs/shared/hyc/data/calvin/task_ABC_D
 # sigma_min: null
 # sigma_max: null
 # noise_scheduler: null
+
+record_ths: 6  # if success < ths, record video (0-6)
+use_caption: False  # In the video, there is caption
