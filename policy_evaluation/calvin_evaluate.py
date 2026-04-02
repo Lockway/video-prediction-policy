@@ -65,7 +65,10 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
     current_data = {}
     ranking = {}
     for checkpoint, results in total_results.items():
-        epoch = checkpoint.stem.split("=")[1]
+        if "=" in checkpoint.stem:
+            epoch = checkpoint.stem.split("=")[1]
+        else:
+            epoch = checkpoint.stem
         print(f"Results for Epoch {epoch}:")
         avg_seq_len = np.mean(results)
         ranking[epoch] = avg_seq_len
