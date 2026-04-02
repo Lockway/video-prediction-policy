@@ -13,6 +13,7 @@ import numpy as np
 from pytorch_lightning import seed_everything
 from termcolor import colored
 import torch
+import torch.nn.functional as F
 from tqdm.auto import tqdm
 import wandb
 import torch.distributed as dist
@@ -212,7 +213,12 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             # time.sleep(0.1)
         if record:
             # update video
-            rollout_video.update(obs["rgb_obs"]["rgb_static"])
+            static_rgb = obs["rgb_obs"]["rgb_static"]
+            gripper_rgb = obs["rgb_obs"]["rgb_gripper"]
+            if static_rgb.shape[-2:] != gripper_rgb.shape[-2:]:
+                gripper_rgb = F.interpolate(gripper_rgb, size=static_rgb.shape[-2:])
+            combined_rgb = torch.cat([static_rgb, gripper_rgb], dim=-1)
+            rollout_video.update(combined_rgb)
         # check if current step solves a task
         current_task_info = task_oracle.get_task_info_for_set(start_info, current_info, {subtask})
         if len(current_task_info) > 0:
