@@ -15,7 +15,7 @@ rotary_embedding_torch
 imageio[ffmpeg]
 gradio
 httpx[socks]
-numpy>1.2
+numpy==1.26.4
 hydra-core==1.1.1
 hydra-colorlog
 matplotlib
