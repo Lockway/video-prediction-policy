@@ -218,12 +218,12 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
         if len(current_task_info) > 0:
             if cfg.debug:
                 print(colored("success", "green"), end=" ")
-            if record:
+            if record and cfg.use_caption:
                 rollout_video.add_language_instruction(lang_annotation)
             return True
     if cfg.debug:
         print(colored("fail", "red"), end=" ")
-    if record:
+    if record and cfg.use_caption:
         rollout_video.add_language_instruction(lang_annotation)
     return False
 
