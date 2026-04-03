@@ -7,7 +7,6 @@ import numpy as np
 import torch
 
 from calvin_env.envs.play_table_env import get_env
-from calvin_env.utils.utils import EglDeviceNotFoundError, get_egl_device_id
 from policy_models.datasets.utils.episode_utils import process_depth, process_rgb, process_state
 
 logger = logging.getLogger(__name__)
@@ -15,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 class HulcWrapper(gym.Wrapper):
     def __init__(self, dataset_loader, device, show_gui=False, **kwargs):
-        self.set_egl_device(device)
+        # We explicitly turn off EGL mapping and use_egl=False to avoid "EGL OpenGL windows" messages
+        # and issues with headless rendering tools.
         env = get_env(
-            dataset_loader.abs_datasets_dir, show_gui=show_gui, obs_space=dataset_loader.observation_space, **kwargs
+            dataset_loader.abs_datasets_dir, show_gui=show_gui, obs_space=dataset_loader.observation_space, use_egl=False, **kwargs
         )
         super(HulcWrapper, self).__init__(env)
         self.observation_space_keys = dataset_loader.observation_space
@@ -25,24 +25,7 @@ class HulcWrapper(gym.Wrapper):
         self.proprio_state = dataset_loader.proprio_state
         self.device = device
         self.relative_actions = "rel_actions" in self.observation_space_keys["actions"]
-        logger.info(f"Initialized PlayTableEnv for device {self.device}")
-
-    @staticmethod
-    def set_egl_device(device):
-        if "EGL_VISIBLE_DEVICES" in os.environ:
-            logger.warning("Environment variable EGL_VISIBLE_DEVICES is already set. Is this intended?")
-        cuda_id = device.index if device.type == "cuda" else 0
-        try:
-            egl_id = get_egl_device_id(cuda_id)
-        except EglDeviceNotFoundError:
-            logger.warning(
-                "Couldn't find correct EGL device. Setting EGL_VISIBLE_DEVICE=0. "
-                "When using DDP with many GPUs this can lead to OOM errors. "
-                "Did you install PyBullet correctly? Please refer to calvin env README"
-            )
-            egl_id = 0
-        os.environ["EGL_VISIBLE_DEVICES"] = str(egl_id)
-        logger.info(f"EGL_DEVICE_ID {egl_id} <==> CUDA_DEVICE_ID {cuda_id}")
+        logger.info(f"Initialized PlayTableEnv for device {self.device} (EGL disabled)")
 
     def transform_observation(self, obs: Dict[str, Any]) -> Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]:
         obs['rgb_obs']['cond_static'] = obs['rgb_obs']['rgb_static']
@@ -80,9 +63,6 @@ class HulcWrapper(gym.Wrapper):
             action = np.split(action_tensor.squeeze().cpu().detach().numpy(), slice_ids)
         action[-1] = 1 if action[-1] > 0 else -1
         o, r, d, i = self.env.step(action)
-        #o['rgb_obs']['cond_static'] = o['rgb_obs']['rgb_static']
-        #o['rgb_obs']['cond_gripper'] = o['rgb_obs']['rgb_gripper']
-        #print('cond_static_shape: ', o['rgb_obs']['cond_static'])
         obs = self.transform_observation(o)
         return obs, r, d, i
 
