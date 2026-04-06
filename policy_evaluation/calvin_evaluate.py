@@ -119,6 +119,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
 
     # video stuff
     if num_videos > 0:
+        model.record_video = True
         rollout_video = RolloutVideo(
             logger=logger,
             empty_cache=False,
@@ -179,7 +180,7 @@ def evaluate_sequence(
     for subtask in eval_sequence:
         if record:
             rollout_video.new_subtask()
-        success = rollout(env, model, task_checker, cfg, subtask, lang_embeddings, val_annotations, record, rollout_video)
+        success = rollout(env, model, task_checker, cfg, subtask, lang_embeddings, val_annotations, record, rollout_video, i)
         if record:
             rollout_video.draw_outcome(success)
         if success:
@@ -189,7 +190,7 @@ def evaluate_sequence(
     return success_counter
 
 
-def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotations, record=False, rollout_video=None):
+def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotations, record=False, rollout_video=None, i=0):
     if cfg.debug:
         print(f"{subtask} ", end="")
         time.sleep(0.5)
@@ -215,9 +216,31 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             # update video
             static_rgb = obs["rgb_obs"]["rgb_static"]
             gripper_rgb = obs["rgb_obs"]["rgb_gripper"]
+            
+            # AI-generated frames
+            static_ai = model.last_ai_frame['static']
+            gripper_ai = model.last_ai_frame['gripper']
+
             if static_rgb.shape[-2:] != gripper_rgb.shape[-2:]:
                 gripper_rgb = F.interpolate(gripper_rgb, size=static_rgb.shape[-2:])
-            combined_rgb = torch.cat([static_rgb, gripper_rgb], dim=-1)
+            
+            # Resize AI frames to match real static frame
+            if static_ai.shape[-2:] != static_rgb.shape[-2:]:
+                static_ai = F.interpolate(static_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
+            if gripper_ai.shape[-2:] != static_rgb.shape[-2:]:
+                gripper_ai = F.interpolate(gripper_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
+            
+            # Ensure AI frames have the same number of dimensions as real frames
+            while static_ai.ndim < static_rgb.ndim:
+                static_ai = static_ai.unsqueeze(0)
+            while gripper_ai.ndim < static_rgb.ndim:
+                gripper_ai = gripper_ai.unsqueeze(0)
+
+            # Combined frames: Real (top), AI (bottom)
+            top_row = torch.cat([static_rgb, gripper_rgb], dim=-1)
+            bottom_row = torch.cat([static_ai, gripper_ai], dim=-1)
+            combined_rgb = torch.cat([top_row, bottom_row], dim=-2)
+            
             rollout_video.update(combined_rgb)
         # check if current step solves a task
         current_task_info = task_oracle.get_task_info_for_set(start_info, current_info, {subtask})

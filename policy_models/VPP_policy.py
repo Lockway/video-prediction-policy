@@ -176,6 +176,9 @@ class VPP_Policy(pl.LightningModule):
         self.latent_goal = None
         self.plan = None
         self.use_text_not_embedding = use_text_not_embedding
+        self.record_video = False
+        self.pred_video = None
+        self.last_ai_frame = None
         # print_model_parameters(self.perceptual_encoder.perceiver_resampler)
         # for clip loss ground truth plot
         self.ema_callback_idx = None
@@ -614,6 +617,21 @@ class VPP_Policy(pl.LightningModule):
         )
         return act_seq
 
+    def generate_ai_video(self, obs, goal):
+        """
+        Generate a full 16-frame AI video prediction for visualization.
+        """
+        rgb_static = obs["rgb_obs"]['rgb_static']
+        rgb_gripper = obs["rgb_obs"]['rgb_gripper']
+        language = [goal["lang_text"]] * 2
+        
+        input_rgb = torch.cat([rgb_static, rgb_gripper], dim=0)
+        
+        with torch.no_grad():
+            video_frames = self.TVP_encoder.predict_video(input_rgb, language, self.timestep, 
+                                                           self.extract_layer_idx, max_length=self.max_length)
+        return video_frames
+
     def step(self, obs, goal):
         """
         Do one step of inference with the model. THis method handles the action chunking case.
@@ -631,6 +649,19 @@ class VPP_Policy(pl.LightningModule):
             pred_action_seq = self.eval_forward(obs, goal)
 
             self.pred_action_seq = pred_action_seq
+            
+            if self.record_video:
+                self.pred_video = self.generate_ai_video(obs, goal)
+
+        if self.record_video and self.pred_video is not None:
+            # Pick the frame corresponding to the current step within the chunk.
+            # pred_video shape is [2, 16, 3, H, W]
+            # frames[0] is static, frames[1] is gripper
+            frame_idx = min(self.rollout_step_counter, 15)
+            self.last_ai_frame = {
+                'static': self.pred_video[0, frame_idx],
+                'gripper': self.pred_video[1, frame_idx]
+            }
 
         current_action = self.pred_action_seq[0, self.rollout_step_counter]
         if len(current_action.shape) == 2:

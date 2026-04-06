@@ -154,6 +154,106 @@ class Diffusion_feature_extractor(nn.Module):
         return feature_pred
 
 
+    @torch.no_grad()
+    def predict_video(
+            self,
+            pixel_values: torch.Tensor,
+            texts,
+            timestep: Union[torch.Tensor, float, int],
+            extract_layer_idx: Union[torch.Tensor, float, int],
+            max_length = 20,
+    ):
+        height = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
+        width = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
+        self.pipeline.vae.eval()
+        self.pipeline.image_encoder.eval()
+        device = self.pipeline.unet.device
+        dtype = self.pipeline.vae.dtype
+        vae = self.pipeline.vae
+
+        num_videos_per_prompt=1
+        batch_size = pixel_values.shape[0]
+
+        pixel_values = rearrange(pixel_values, 'b f c h w-> (b f) c h w').to(dtype)
+
+        with torch.no_grad():
+            encoder_hidden_states = self.encode_text(texts, self.tokenizer, self.text_encoder, position_encode=self.position_encoding, use_clip=True, max_length=max_length)
+        encoder_hidden_states = encoder_hidden_states.to(dtype)
+        image_embeddings = encoder_hidden_states
+
+        if pixel_values.shape[-3] == 4:
+            image_latents = pixel_values/vae.config.scaling_factor
+        else:
+            image_latents = self.pipeline._encode_vae_image(pixel_values, device, num_videos_per_prompt, False)
+        image_latents = image_latents.to(image_embeddings.dtype)
+
+        num_frames = 16
+        image_latents = image_latents.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
+
+        fps=4
+        motion_bucket_id=127
+        added_time_ids = self.pipeline._get_add_time_ids(
+            fps,
+            motion_bucket_id,
+            0,
+            image_embeddings.dtype,
+            batch_size,
+            num_videos_per_prompt,
+            False,
+        )
+        added_time_ids = added_time_ids.to(device)
+
+        self.pipeline.scheduler.set_timesteps(timestep, device=device)
+        timesteps = self.pipeline.scheduler.timesteps
+
+        num_channels_latents = self.pipeline.unet.config.in_channels
+        latents = self.pipeline.prepare_latents(
+            batch_size * num_videos_per_prompt,
+            num_frames,
+            num_channels_latents,
+            height,
+            width,
+            image_embeddings.dtype,
+            device,
+            None,
+            None,
+        )
+
+        for i, t in enumerate(timesteps):
+            latent_model_input = latents
+            latent_model_input = self.pipeline.scheduler.scale_model_input(latent_model_input, t)
+            latent_model_input = torch.cat([latent_model_input, image_latents], dim=2)
+
+            noise_pred = self.pipeline.unet(
+                latent_model_input,
+                t,
+                encoder_hidden_states=image_embeddings,
+                added_time_ids=added_time_ids,
+                return_dict=False,
+            )[0]
+
+            latents = self.pipeline.scheduler.step(noise_pred, t, latents).prev_sample
+
+        # Decode latents
+        b, f, c, h, w = latents.shape
+        latents = rearrange(latents, "b f c h w -> (b f) c h w")
+        latents = latents / vae.config.scaling_factor
+        
+        # Decode in chunks to avoid OOM
+        frames_list = []
+        chunk_size = 8
+        for i in range(0, latents.shape[0], chunk_size):
+            chunk = latents[i : i + chunk_size]
+            decoded = vae.decode(chunk, num_frames=chunk.shape[0]).sample
+            frames_list.append(decoded)
+        frames = torch.cat(frames_list, dim=0)
+
+        # Post-process to [0, 1]
+        frames = (frames / 2 + 0.5).clamp(0, 1)
+        frames = rearrange(frames, "(b f) c h w -> b f c h w", b=b, f=f)
+        
+        return frames
+
     # Unet
     def step_unet(
         self,
