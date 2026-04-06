@@ -35,26 +35,24 @@ class Diffusion_feature_extractor(nn.Module):
             all_layer = False,
             step_time = 1,
             max_length = 20,
+            encoder_hidden_states = None,
     ):
-
         height = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
         width = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
         self.pipeline.vae.eval()
         self.pipeline.image_encoder.eval()
         device = self.pipeline.unet.device
         dtype = self.pipeline.vae.dtype
-        #print('dtype:',dtype)
         vae = self.pipeline.vae
 
         num_videos_per_prompt=1
-
         batch_size = pixel_values.shape[0]
 
         pixel_values = rearrange(pixel_values, 'b f c h w-> (b f) c h w').to(dtype)
 
         with torch.no_grad():
-            # texts, tokenizer, text_encoder, img_cond=None, img_cond_mask=None, img_encoder=None, position_encode=True, use_clip=False, max_length=20
-            encoder_hidden_states = self.encode_text(texts, self.tokenizer, self.text_encoder, position_encode=self.position_encoding, use_clip=True, max_length=max_length)
+            if encoder_hidden_states is None:
+                encoder_hidden_states = self.encode_text(texts, self.tokenizer, self.text_encoder, position_encode=self.position_encoding, use_clip=True, max_length=max_length)
         encoder_hidden_states = encoder_hidden_states.to(dtype)
         image_embeddings = encoder_hidden_states
 
@@ -162,6 +160,7 @@ class Diffusion_feature_extractor(nn.Module):
             timestep: Union[torch.Tensor, float, int],
             extract_layer_idx: Union[torch.Tensor, float, int],
             max_length = 20,
+            encoder_hidden_states = None,
     ):
         height = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
         width = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
@@ -177,7 +176,8 @@ class Diffusion_feature_extractor(nn.Module):
         pixel_values = rearrange(pixel_values, 'b f c h w-> (b f) c h w').to(dtype)
 
         with torch.no_grad():
-            encoder_hidden_states = self.encode_text(texts, self.tokenizer, self.text_encoder, position_encode=self.position_encoding, use_clip=True, max_length=max_length)
+            if encoder_hidden_states is None:
+                encoder_hidden_states = self.encode_text(texts, self.tokenizer, self.text_encoder, position_encode=self.position_encoding, use_clip=True, max_length=max_length)
         encoder_hidden_states = encoder_hidden_states.to(dtype)
         image_embeddings = encoder_hidden_states
 
@@ -236,23 +236,26 @@ class Diffusion_feature_extractor(nn.Module):
 
         # Decode latents
         b, f, c, h, w = latents.shape
-        latents = rearrange(latents, "b f c h w -> (b f) c h w")
-        latents = latents / vae.config.scaling_factor
-        
+        decoded_latents = latents.clone()
+        latents_to_decode = latents / vae.config.scaling_factor
+
         # Decode in chunks to avoid OOM
         frames_list = []
         chunk_size = 8
-        for i in range(0, latents.shape[0], chunk_size):
-            chunk = latents[i : i + chunk_size]
-            decoded = vae.decode(chunk, num_frames=chunk.shape[0]).sample
+        for i in range(0, latents_to_decode.shape[0], chunk_size):
+            chunk = latents_to_decode[i : i + chunk_size]
+            # Flatten batch and frames for the VAE decoder
+            b_c, f_c, c_c, h_c, w_c = chunk.shape
+            chunk = rearrange(chunk, "b f c h w -> (b f) c h w")
+            decoded = vae.decode(chunk, num_frames=f_c).sample
             frames_list.append(decoded)
         frames = torch.cat(frames_list, dim=0)
 
         # Post-process to [0, 1]
         frames = (frames / 2 + 0.5).clamp(0, 1)
         frames = rearrange(frames, "(b f) c h w -> b f c h w", b=b, f=f)
-        
-        return frames
+
+        return frames, decoded_latents
 
     # Unet
     def step_unet(

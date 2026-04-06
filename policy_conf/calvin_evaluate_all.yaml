@@ -32,7 +32,7 @@ model:
   text_encoder_path:
   pretrained_model_path: /home/disk2/gyj/hyc_ckpt/svd_2camera/checkpoint-100000
   use_Former: 3d
-  timestep: 20
+  timestep: 1
   use_all_layer: True
   extract_layer_idx: 1
   use_position_encoding: False
@@ -60,8 +60,8 @@ eval_cfg_overwrite:
     voltron_cache: /home/disk2/gyj/code/mdt_policy/pretrained_model_weights
 
 ep_len: 360
-num_sequences: 5  # Default: 1000
-num_videos: 5
+num_sequences: 1  # Default: 1000
+num_videos: 1
 lang_embeddings: null
 render: False
 log_wandb: True

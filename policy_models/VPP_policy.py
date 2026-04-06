@@ -21,10 +21,7 @@ from transformers import AutoTokenizer, CLIPTextModelWithProjection
 logger = logging.getLogger(__name__)
 
 def load_primary_models(pretrained_model_path, eval=False):
-    if eval:
-        pipeline = StableVideoDiffusionPipeline.from_pretrained(pretrained_model_path, torch_dtype=torch.float16)
-    else:
-        pipeline = StableVideoDiffusionPipeline.from_pretrained(pretrained_model_path)
+    pipeline = StableVideoDiffusionPipeline.from_pretrained(pretrained_model_path)
     return pipeline, None, pipeline.feature_extractor, pipeline.scheduler, pipeline.video_processor, \
         pipeline.image_encoder, pipeline.vae, pipeline.unet
 
@@ -184,6 +181,9 @@ class VPP_Policy(pl.LightningModule):
         self.record_video = False
         self.pred_video = None
         self.last_ai_frame = None
+        self.last_chunk_data = None
+        self.cached_text_embedding = None
+        self.cached_text_name = None
         # print_model_parameters(self.perceptual_encoder.perceiver_resampler)
         # for clip loss ground truth plot
         self.ema_callback_idx = None
@@ -338,6 +338,8 @@ class VPP_Policy(pl.LightningModule):
 
         with torch.no_grad():
             input_rgb = torch.cat([rgb_static, rgb_gripper], dim=0)
+            if isinstance(language, str):
+                language = [language]
             language = language + language
             perceptual_features = self.TVP_encoder(input_rgb, language, self.timestep,
                                                            self.extract_layer_idx, all_layer=self.use_all_layer,
@@ -620,7 +622,7 @@ class VPP_Policy(pl.LightningModule):
             latent_goal,
             inference=True,
         )
-        return act_seq
+        return act_seq, perceptual_features
 
     def generate_ai_video(self, obs, goal):
         """
@@ -633,9 +635,9 @@ class VPP_Policy(pl.LightningModule):
         input_rgb = torch.cat([rgb_static, rgb_gripper], dim=0)
         
         with torch.no_grad():
-            video_frames = self.TVP_encoder.predict_video(input_rgb, language, self.timestep, 
+            video_frames, latents = self.TVP_encoder.predict_video(input_rgb, language, self.timestep, 
                                                            self.extract_layer_idx, max_length=self.max_length)
-        return video_frames
+        return video_frames, latents
 
     def step(self, obs, goal):
         """
@@ -651,17 +653,71 @@ class VPP_Policy(pl.LightningModule):
             Predicted action.
         """
         if self.rollout_step_counter % self.multistep == 0:
-            pred_action_seq = self.eval_forward(obs, goal)
+            language = goal["lang_text"]
+            if self.cached_text_name != language:
+                with torch.no_grad():
+                    self.cached_text_embedding = self.TVP_encoder.encode_text([language] * 2, self.TVP_encoder.tokenizer, self.TVP_encoder.text_encoder, position_encode=self.TVP_encoder.position_encoding, use_clip=True, max_length=self.max_length)
+                    self.cached_text_name = language
 
-            self.pred_action_seq = pred_action_seq
-            
             if self.record_video:
-                self.pred_video = self.generate_ai_video(obs, goal)
+                # Merge feature extraction and video generation
+                rgb_static = obs["rgb_obs"]['rgb_static'].to(self.device)
+                rgb_gripper = obs["rgb_obs"]['rgb_gripper'].to(self.device)
+                
+                if 'lang_text' in goal:
+                    if self.use_text_not_embedding:
+                        latent_goal = self.language_goal(goal["lang_text"]).to(torch.float32)
+                    else:
+                        latent_goal = self.language_goal(goal["lang"]).unsqueeze(0).to(torch.float32).to(self.device)
+                
+                input_rgb = torch.cat([rgb_static, rgb_gripper], dim=0)
+                
+                with torch.no_grad():
+                    pred_video, video_latents = self.TVP_encoder.predict_video(input_rgb, None, self.timestep, 
+                                                                   self.extract_layer_idx, max_length=self.max_length,
+                                                                   encoder_hidden_states=self.cached_text_embedding)
+                    
+                    perceptual_features = self.TVP_encoder(input_rgb, None, self.timestep,
+                                                                   self.extract_layer_idx, all_layer=self.use_all_layer,
+                                                                   step_time=1, max_length=self.max_length,
+                                                                   encoder_hidden_states=self.cached_text_embedding)
+                
+                batch = rgb_static.shape[0]
+                num_frames = self.Former_num_time_embeds
+                perceptual_features = einops.rearrange(perceptual_features, 'b f c h w-> b f c (h w)')
+                perceptual_features = einops.rearrange(perceptual_features, 'b f c l-> b f l c')
+                perceptual_features = perceptual_features[:, :num_frames, :, :]
+                perceptual_features, gripper_feature = torch.split(perceptual_features, [batch, batch], dim=0)
+                perceptual_features = torch.cat([perceptual_features, gripper_feature], dim=2)
+                perceptual_features = perceptual_features.to(torch.float32)
+                perceptual_features = self.Video_Former(perceptual_features)
+                if self.use_Former == 'linear':
+                    perceptual_features = rearrange(perceptual_features, 'b T q d -> b (T q) d')
+                
+                perceptual_emb = {'state_images': perceptual_features, 'modality': 'lang'}
+                
+                pred_action_seq = self.denoise_actions(
+                    torch.zeros_like(latent_goal).to(latent_goal.device),
+                    perceptual_emb,
+                    latent_goal,
+                    inference=True,
+                )
+                
+                self.pred_action_seq = pred_action_seq
+                self.pred_video = pred_video
+                self.last_chunk_data = {
+                    'actions': pred_action_seq,
+                    'condition': perceptual_features,
+                    'latents': video_latents,
+                    'ai_video_frames': pred_video
+                }
+            else:
+                pred_action_seq, condition = self.eval_forward(obs, goal)
+                self.pred_action_seq = pred_action_seq
+                self.last_chunk_data = None
 
         if self.record_video and self.pred_video is not None:
             # Pick the frame corresponding to the current step within the chunk.
-            # pred_video shape is [2, 16, 3, H, W]
-            # frames[0] is static, frames[1] is gripper
             frame_idx = (self.rollout_step_counter * self.video_speed_up) // self.video_speed_down
             frame_idx = min(frame_idx, 15)
             self.last_ai_frame = {

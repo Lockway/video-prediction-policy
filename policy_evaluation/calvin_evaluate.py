@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 import wandb
 import torch.distributed as dist
+from moviepy.editor import ImageSequenceClip
 
 from policy_evaluation.multistep_sequences import get_sequences
 from policy_evaluation.utils import get_default_beso_and_env, get_env_state_for_initial_condition, join_vis_lang
@@ -116,6 +117,10 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
 def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=None):
     task_oracle = hydra.utils.instantiate(cfg.tasks)
     val_annotations = cfg.annotations
+    
+    if save_dir is not None:
+        for folder in ["rollout", "videos", "action", "condition", "latent"]:
+            os.makedirs(save_dir / folder, exist_ok=True)
 
     # video stuff
     if num_videos > 0:
@@ -124,7 +129,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
             logger=logger,
             empty_cache=False,
             log_to_file=True,
-            save_dir=save_dir,
+            save_dir=save_dir / "rollout" if save_dir else None,
             resolution_scale=1,
         )
     else:
@@ -134,6 +139,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
 
     results = []
     plans = defaultdict(list)
+    model.metadata_list = []
 
     if not cfg.debug:
         eval_sequences = tqdm(eval_sequences, position=0, leave=True)
@@ -141,7 +147,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     for i, (initial_state, eval_sequence) in enumerate(eval_sequences):
         record = i < num_videos
         result = evaluate_sequence(
-            env, model, task_oracle, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, i
+            env, model, task_oracle, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, i, save_dir=save_dir
         )
         results.append(result)
         if record:
@@ -159,11 +165,16 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     #    print('save_video_2:',rollout_video.save_dir)
     #    # log rollout videos
     #    rollout_video._log_videos_to_file(0, save_as_video=True)
+    
+    if save_dir is not None:
+        with open(save_dir / "metadata.json", "w") as f:
+            json.dump(model.metadata_list, f, indent=2)
+            
     return results, plans
 
 
 def evaluate_sequence(
-    env, model, task_checker, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, i
+    env, model, task_checker, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, i, save_dir=None
 ):
     robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
     env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
@@ -180,7 +191,7 @@ def evaluate_sequence(
     for subtask in eval_sequence:
         if record:
             rollout_video.new_subtask()
-        success = rollout(env, model, task_checker, cfg, subtask, lang_embeddings, val_annotations, record, rollout_video, i)
+        success = rollout(env, model, task_checker, cfg, subtask, lang_embeddings, val_annotations, record, rollout_video, i, save_dir=save_dir)
         if record:
             rollout_video.draw_outcome(success)
         if success:
@@ -190,7 +201,56 @@ def evaluate_sequence(
     return success_counter
 
 
-def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotations, record=False, rollout_video=None, i=0):
+import threading
+import queue
+
+class BackgroundSaver:
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+
+    def _worker(self):
+        while True:
+            item = self.queue.get()
+            if item is None:
+                break
+            func, args, kwargs = item
+            try:
+                func(*args, **kwargs)
+            except Exception as e:
+                print(f"Error in background saver: {e}")
+            self.queue.task_done()
+
+    def save(self, func, *args, **kwargs):
+        self.queue.put((func, args, kwargs))
+
+    def wait(self):
+        self.queue.join()
+
+bg_saver = BackgroundSaver()
+
+def save_video_and_data(base_name, ai_frames, data, save_dir, cfg_seed, subtask, tag_clean, i, timestamp):
+    # [2] videos: ai-generated videos with different views, temporally concatenated
+    concat_frames = torch.cat([ai_frames[0], ai_frames[1]], dim=0) # [32, 3, H, W]
+    
+    video_filename = f"{base_name}.mp4"
+    video_path = save_dir / "videos" / video_filename
+    
+    video_np = (concat_frames.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
+    clip = ImageSequenceClip(list(video_np), fps=30)
+    clip.write_videofile(str(video_path), codec='libx264', logger=None)
+    
+    # [3] actions, latents, condition: .pt files
+    action_filename = f"{base_name}_actions.pt"
+    latent_filename = f"{base_name}_latents.pt"
+    condition_filename = f"{base_name}_condition.pt"
+    
+    torch.save(data['actions'].cpu(), save_dir / "action" / action_filename)
+    torch.save(data['latents'].cpu(), save_dir / "latent" / latent_filename)
+    torch.save(data['condition'].cpu(), save_dir / "condition" / condition_filename)
+
+def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotations, record=False, rollout_video=None, i=0, save_dir=None):
     if cfg.debug:
         print(f"{subtask} ", end="")
         time.sleep(0.5)
@@ -203,53 +263,105 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
     model.reset()
     start_info = env.get_info()
 
+    current_sequence_metadata = []
+    cached_bottom_row = None
+
     for step in range(cfg.ep_len):
         action = model.step(obs, goal)
-        #print('obs_max:',obs["rgb_obs"]['cond_static'].max())
-        #print('obs_shape:', obs["rgb_obs"]['cond_static'].shape)
+        
+        # Check for new chunk
+        if record and save_dir is not None and model.last_chunk_data is not None and model.rollout_step_counter == 1:
+            chunk_start_step = step
+            data = model.last_chunk_data
+            
+            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+            tag_clean = get_video_tag(i).replace("/", "_")
+            base_name = f"{tag_clean}_seed{cfg.seed}_step{chunk_start_step}"
+            
+            # Use background saver for video and data
+            bg_saver.save(save_video_and_data, base_name, data['ai_video_frames'], data, save_dir, cfg.seed, subtask, tag_clean, i, timestamp)
+            
+            video_filename = f"{base_name}.mp4"
+            video_path = save_dir / "videos" / video_filename
+            
+            action_filename = f"{base_name}_actions.pt"
+            latent_filename = f"{base_name}_latents.pt"
+            condition_filename = f"{base_name}_condition.pt"
+            
+            metadata_entry = {
+                "original_video_path": str(Path("rollout") / f"{tag_clean}_{i}.mp4"),
+                "dataset_source": "CALVIN",
+                "task": subtask,
+                "video_path": str(video_path),
+                "latent_path": str(save_dir / "latent" / latent_filename),
+                "condition_path": str(save_dir / "condition" / condition_filename),
+                "action_path": str(save_dir / "action" / action_filename),
+                "seed": cfg.seed,
+                "num_frames": 32, # 16 * 2 views
+                "time": timestamp,
+                "success": 0, # Default to 0, will update if task succeeds in this chunk
+            }
+            current_sequence_metadata.append(metadata_entry)
+            model.metadata_list.append(metadata_entry)
+            cached_bottom_row = None # Reset cache when new chunk starts
+
         obs, _, _, current_info = env.step(action)
-        if cfg.debug:
-            img = env.render(mode="rgb_array")
-            join_vis_lang(img, lang_annotation)
-            # time.sleep(0.1)
-        if record:
-            # update video
-            static_rgb = obs["rgb_obs"]["rgb_static"]
-            gripper_rgb = obs["rgb_obs"]["rgb_gripper"]
-            
-            # AI-generated frames
-            static_ai = model.last_ai_frame['static']
-            gripper_ai = model.last_ai_frame['gripper']
-
-            if static_rgb.shape[-2:] != gripper_rgb.shape[-2:]:
-                gripper_rgb = F.interpolate(gripper_rgb, size=static_rgb.shape[-2:])
-            
-            # Resize AI frames to match real static frame
-            if static_ai.shape[-2:] != static_rgb.shape[-2:]:
-                static_ai = F.interpolate(static_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
-            if gripper_ai.shape[-2:] != static_rgb.shape[-2:]:
-                gripper_ai = F.interpolate(gripper_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
-            
-            # Ensure AI frames have the same number of dimensions as real frames
-            while static_ai.ndim < static_rgb.ndim:
-                static_ai = static_ai.unsqueeze(0)
-            while gripper_ai.ndim < static_rgb.ndim:
-                gripper_ai = gripper_ai.unsqueeze(0)
-
-            # Combined frames: Real (top), AI (bottom)
-            top_row = torch.cat([static_rgb, gripper_rgb], dim=-1)
-            bottom_row = torch.cat([static_ai, gripper_ai], dim=-1)
-            combined_rgb = torch.cat([top_row, bottom_row], dim=-2)
-            
-            rollout_video.update(combined_rgb)
+        
         # check if current step solves a task
         current_task_info = task_oracle.get_task_info_for_set(start_info, current_info, {subtask})
         if len(current_task_info) > 0:
+            if record and save_dir is not None:
+                # Update all chunks in this subtask as successful if the subtask is completed
+                for entry in current_sequence_metadata:
+                    entry["success"] = 1
+            
             if cfg.debug:
                 print(colored("success", "green"), end=" ")
             if record and cfg.use_caption:
                 rollout_video.add_language_instruction(lang_annotation)
             return True
+        
+        if record:
+            # update video
+            static_rgb = obs["rgb_obs"]["rgb_static"]
+            gripper_rgb = obs["rgb_obs"]["rgb_gripper"]
+            
+            if model.last_ai_frame is not None:
+                if cached_bottom_row is None or model.rollout_step_counter == 1:
+                    static_ai = model.last_ai_frame['static']
+                    gripper_ai = model.last_ai_frame['gripper']
+
+                    # Convert from [0, 1] to [-1, 1] to match real frame normalization expected by RolloutVideo
+                    static_ai = static_ai * 2 - 1
+                    gripper_ai = gripper_ai * 2 - 1
+
+                    if static_rgb.shape[-2:] != gripper_rgb.shape[-2:]:
+                        gripper_rgb = F.interpolate(gripper_rgb, size=static_rgb.shape[-2:])
+                    
+                    if static_ai.shape[-2:] != static_rgb.shape[-2:]:
+                        static_ai = F.interpolate(static_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
+                    if gripper_ai.shape[-2:] != static_rgb.shape[-2:]:
+                        gripper_ai = F.interpolate(gripper_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
+                    
+                    while static_ai.ndim < static_rgb.ndim:
+                        static_ai = static_ai.unsqueeze(0)
+                    while gripper_ai.ndim < static_rgb.ndim:
+                        gripper_ai = gripper_ai.unsqueeze(0)
+                    
+                    cached_bottom_row = torch.cat([static_ai, gripper_ai], dim=-1)
+
+                top_row = torch.cat([static_rgb, gripper_rgb], dim=-1)
+                combined_rgb = torch.cat([top_row, cached_bottom_row], dim=-2)
+                rollout_video.update(combined_rgb)
+            else:
+                top_row = torch.cat([static_rgb, gripper_rgb], dim=-1)
+                rollout_video.update(torch.cat([top_row, torch.zeros_like(top_row)], dim=-2))
+
+    if cfg.debug:
+        print(colored("fail", "red"), end=" ")
+    if record and cfg.use_caption:
+        rollout_video.add_language_instruction(lang_annotation)
+    return False
     if cfg.debug:
         print(colored("fail", "red"), end=" ")
     if record and cfg.use_caption:
