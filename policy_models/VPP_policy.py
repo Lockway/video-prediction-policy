@@ -64,6 +64,8 @@ class VPP_Policy(pl.LightningModule):
             max_length: int = 20,
             extract_layer_idx: int = 1,
             use_all_layer: bool = False,
+            video_speed_up: int = 1,
+            video_speed_down: int = 1,
             obs_seq_len: int = 1,
             action_dim: int = 7,
             action_seq_len: int = 10,
@@ -72,6 +74,9 @@ class VPP_Policy(pl.LightningModule):
         self.latent_dim = latent_dim
         self.use_all_layer = use_all_layer
         self.use_position_encoding = use_position_encoding
+
+        self.video_speed_up = video_speed_up
+        self.video_speed_down = video_speed_down
 
         self.act_window_size = act_window_size
         self.action_dim = action_dim
@@ -657,7 +662,8 @@ class VPP_Policy(pl.LightningModule):
             # Pick the frame corresponding to the current step within the chunk.
             # pred_video shape is [2, 16, 3, H, W]
             # frames[0] is static, frames[1] is gripper
-            frame_idx = min(self.rollout_step_counter, 15)
+            frame_idx = (self.rollout_step_counter * self.video_speed_up) // self.video_speed_down
+            frame_idx = min(frame_idx, 15)
             self.last_ai_frame = {
                 'static': self.pred_video[0, frame_idx],
                 'gripper': self.pred_video[1, frame_idx]

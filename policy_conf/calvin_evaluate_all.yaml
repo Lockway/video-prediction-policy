@@ -17,6 +17,8 @@ model:
   sigma_sample_density_type: 'loglogistic'
   use_lr_scheduler: true
   act_window_size: 10
+  video_speed_up: 1
+  video_speed_down: 4
   obs_seq_len: 1
   action_dim: 7
   action_seq_len: 10
@@ -58,8 +60,8 @@ eval_cfg_overwrite:
     voltron_cache: /home/disk2/gyj/code/mdt_policy/pretrained_model_weights
 
 ep_len: 360
-num_sequences: 1  # Default: 1000
-num_videos: 1
+num_sequences: 5  # Default: 1000
+num_videos: 5
 lang_embeddings: null
 render: False
 log_wandb: True
