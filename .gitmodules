@@ -1,3 +1,7 @@
 [submodule "calvin"]
 	path = calvin
 	url = https://github.com/Lockway/calvin.git
+
+[submodule "Video-Depth-Anything"]
+	path = Video-Depth-Anything
+	url = https://github.com/Lockway/Video-Depth-Anything.git
