@@ -23,9 +23,10 @@ opencv-python
 omegaconf
 plotly
 ftfy
-torch==2.0.1
+torch==2.1.1
 torchsde
 torchdiffeq
+torchvision==0.16.1
 vit-pytorch==1.4.4
 pytorch-lightning==1.9.5
 voltron-robotics
