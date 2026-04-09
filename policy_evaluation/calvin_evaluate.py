@@ -276,7 +276,7 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             
             timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
             tag_clean = get_video_tag(i).replace("/", "_")
-            base_name = f"{tag_clean}_seed{cfg.seed}_step{chunk_start_step}"
+            base_name = f"{tag_clean}_{subtask}_seed{cfg.seed}_step{chunk_start_step}"
             
             # Use background saver for video and data
             bg_saver.save(save_video_and_data, base_name, data['ai_video_frames'], data, save_dir, cfg.seed, subtask, tag_clean, i, timestamp)
