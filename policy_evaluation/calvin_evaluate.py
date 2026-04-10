@@ -327,28 +327,27 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             gripper_rgb = obs["rgb_obs"]["rgb_gripper"]
             
             if model.last_ai_frame is not None:
-                if cached_bottom_row is None or model.rollout_step_counter == 1:
-                    static_ai = model.last_ai_frame['static']
-                    gripper_ai = model.last_ai_frame['gripper']
+                static_ai = model.last_ai_frame['static']
+                gripper_ai = model.last_ai_frame['gripper']
 
-                    # Convert from [0, 1] to [-1, 1] to match real frame normalization expected by RolloutVideo
-                    static_ai = static_ai * 2 - 1
-                    gripper_ai = gripper_ai * 2 - 1
+                # Convert from [0, 1] to [-1, 1] to match real frame normalization expected by RolloutVideo
+                static_ai = static_ai * 2 - 1
+                gripper_ai = gripper_ai * 2 - 1
 
-                    if static_rgb.shape[-2:] != gripper_rgb.shape[-2:]:
-                        gripper_rgb = F.interpolate(gripper_rgb, size=static_rgb.shape[-2:])
-                    
-                    if static_ai.shape[-2:] != static_rgb.shape[-2:]:
-                        static_ai = F.interpolate(static_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
-                    if gripper_ai.shape[-2:] != static_rgb.shape[-2:]:
-                        gripper_ai = F.interpolate(gripper_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
-                    
-                    while static_ai.ndim < static_rgb.ndim:
-                        static_ai = static_ai.unsqueeze(0)
-                    while gripper_ai.ndim < static_rgb.ndim:
-                        gripper_ai = gripper_ai.unsqueeze(0)
-                    
-                    cached_bottom_row = torch.cat([static_ai, gripper_ai], dim=-1)
+                if static_rgb.shape[-2:] != gripper_rgb.shape[-2:]:
+                    gripper_rgb = F.interpolate(gripper_rgb, size=static_rgb.shape[-2:])
+                
+                if static_ai.shape[-2:] != static_rgb.shape[-2:]:
+                    static_ai = F.interpolate(static_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
+                if gripper_ai.shape[-2:] != static_rgb.shape[-2:]:
+                    gripper_ai = F.interpolate(gripper_ai.unsqueeze(0), size=static_rgb.shape[-2:]).squeeze(0)
+                
+                while static_ai.ndim < static_rgb.ndim:
+                    static_ai = static_ai.unsqueeze(0)
+                while gripper_ai.ndim < static_rgb.ndim:
+                    gripper_ai = gripper_ai.unsqueeze(0)
+                
+                cached_bottom_row = torch.cat([static_ai, gripper_ai], dim=-1)
 
                 top_row = torch.cat([static_rgb, gripper_rgb], dim=-1)
                 combined_rgb = torch.cat([top_row, cached_bottom_row], dim=-2)
