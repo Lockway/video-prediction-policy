@@ -165,8 +165,25 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     #    rollout_video._log_videos_to_file(0, save_as_video=True)
     
     if save_dir is not None:
-        with open(save_dir / "metadata.json", "w") as f:
-            json.dump(model.metadata_list, f, indent=2)
+        metadata_path = save_dir / "metadata.json"
+        existing_metadata = []
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, "r") as f:
+                    existing_metadata = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+            except Exception as e:
+                print(f"Warning: Could not load existing metadata: {e}")
+        
+        # Avoid duplicate entries if running the same seed twice
+        # We can check by video_path or some unique ID
+        seen_videos = {entry.get("video_path") for entry in existing_metadata}
+        new_entries = [entry for entry in model.metadata_list if entry.get("video_path") not in seen_videos]
+        
+        combined_metadata = existing_metadata + new_entries
+        with open(metadata_path, "w") as f:
+            json.dump(combined_metadata, f, indent=2)
             
     return results, plans
 
@@ -298,6 +315,7 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
                 "num_frames": 32, # 16 * 2 views
                 "time": timestamp,
                 "success": 0, # Default to 0, will update if task succeeds in this chunk
+                "robot_obs": obs["robot_obs_raw"].cpu().numpy().tolist(), # Initial robot state for this chunk
             }
             current_sequence_metadata.append(metadata_entry)
             model.metadata_list.append(metadata_entry)
