@@ -659,6 +659,16 @@ class VPP_Policy(pl.LightningModule):
                     self.cached_text_embedding = self.TVP_encoder.encode_text([language] * 2, self.TVP_encoder.tokenizer, self.TVP_encoder.text_encoder, position_encode=self.TVP_encoder.position_encoding, use_clip=True, max_length=self.max_length)
                     self.cached_text_name = language
 
+            # Save RNG state to preserve environment/task sequence order
+            rng_state = torch.get_rng_state()
+            if torch.cuda.is_available():
+                cuda_rng_state = torch.cuda.get_rng_state()
+            
+            # Set seed for model's stochastic behavior (actions and video)
+            torch.manual_seed(self.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(self.seed)
+
             if self.record_video:
                 # Merge feature extraction and video generation
                 rgb_static = obs["rgb_obs"]['rgb_static'].to(self.device)
@@ -715,6 +725,11 @@ class VPP_Policy(pl.LightningModule):
                 pred_action_seq, condition = self.eval_forward(obs, goal)
                 self.pred_action_seq = pred_action_seq
                 self.last_chunk_data = None
+
+            # Restore RNG state so environment/task sequence order is unaffected
+            torch.set_rng_state(rng_state)
+            if torch.cuda.is_available():
+                torch.cuda.set_rng_state(cuda_rng_state)
 
         if self.record_video and self.pred_video is not None:
             # Pick the frame corresponding to the current step within the chunk.
