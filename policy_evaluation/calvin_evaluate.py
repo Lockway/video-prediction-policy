@@ -19,6 +19,7 @@ import wandb
 import torch.distributed as dist
 from moviepy.editor import ImageSequenceClip
 
+from omegaconf import ListConfig
 from policy_evaluation.multistep_sequences import get_sequences
 from policy_evaluation.utils import get_default_beso_and_env, get_env_state_for_initial_condition, join_vis_lang
 from policy_models.utils.utils import get_last_checkpoint
@@ -27,7 +28,7 @@ from policy_models.rollout.rollout_video import RolloutVideo
 logger = logging.getLogger(__name__)
 
 
-VIDEO_TAG = "_long_horizon/sequence"
+VIDEO_TAG = "sequence"
 
 
 def get_log_dir(log_dir):
@@ -93,10 +94,10 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
             task_info[task] = {"success": cnt_success[task], "total": total[task]}
             print(f"{task}: {cnt_success[task]} / {total[task]} |  SR: {cnt_success[task] / total[task] * 100:.1f}%")
 
-        data = {"avg_seq_len": avg_seq_len, "chain_sr": chain_sr, "task_info": task_info}
+        data = {"avg_seq_len": avg_seq_len, "chain_sr": chain_sr, "task_info": task_info, "seed": cfg.seed}
         # wandb.log({"avrg_performance/avg_seq_len": avg_seq_len, "avrg_performance/chain_sr": chain_sr, "detailed_metrics/task_info": task_info})
         # Error: You must call wandb.init() before wandb.log()
-        current_data[epoch] = data
+        current_data[f"{epoch}_seed{cfg.seed}"] = data
 
         print()
     previous_data = {}
@@ -156,7 +157,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
             description += f" Average: {average_rate:.1f} |"
             eval_sequences.set_description(description)
         if result < cfg.record_ths and record:
-            rollout_video._log_currentvideos_to_file(i, save_as_video=True)
+            rollout_video._log_currentvideos_to_file(f"{i}_seed{cfg.seed}", save_as_video=True)
 
     #if num_videos > 0:
     #    print('save_video_2:',rollout_video.save_dir)
@@ -286,7 +287,7 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             condition_filename = f"{base_name}_condition.pt"
             
             metadata_entry = {
-                "original_video_path": str(Path("rollout") / f"{tag_clean}_{i}.mp4"),
+                "original_video_path": str(Path("rollout") / f"{tag_clean}_{i}_seed{cfg.seed}.mp4"),
                 "dataset_source": "CALVIN",
                 "task": subtask,
                 "video_path": str(video_path),
@@ -428,10 +429,17 @@ def main(cfg):
         model.eval()
         if log_wandb:
             log_dir = get_log_dir(cfg.train_folder)
-            os.makedirs(log_dir / "wandb", exist_ok=False)
+            os.makedirs(log_dir / "wandb", exist_ok=True)
+            seeds = list(cfg.seed) if isinstance(cfg.seed, (list, tuple, ListConfig)) else [cfg.seed]
+            for seed in seeds:
+                print(f"Evaluating seed: {seed}")
+                cfg.seed = seed
+                model.seed = seed
 
-            results[checkpoint], plans[checkpoint] = evaluate_policy(model, env, lang_embeddings, cfg, num_videos=cfg.num_videos, save_dir=Path(log_dir))
-            print_and_save(results, plans, cfg, log_dir=log_dir)
+                seed_results = {}
+                seed_plans = {}
+                seed_results[checkpoint], seed_plans[checkpoint] = evaluate_policy(model, env, lang_embeddings, cfg, num_videos=cfg.num_videos, save_dir=Path(log_dir))
+                print_and_save(seed_results, seed_plans, cfg, log_dir=log_dir)
             #run.finish()
 
 
