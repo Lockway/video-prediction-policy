@@ -307,6 +307,8 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
                 "original_video_path": str(Path("rollout") / f"{tag_clean}_{i}_seed{cfg.seed}.mp4"),
                 "dataset_source": "CALVIN",
                 "task": subtask,
+                "sequence": i,
+                "step": chunk_start_step,
                 "video_path": str(video_path),
                 "latent_path": str(save_dir / "latent" / latent_filename),
                 "condition_path": str(save_dir / "condition" / condition_filename),
