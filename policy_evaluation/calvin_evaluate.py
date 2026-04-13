@@ -27,10 +27,7 @@ from policy_models.rollout.rollout_video import RolloutVideo
 logger = logging.getLogger(__name__)
 
 
-def get_video_tag(i):
-    if dist.is_available() and dist.is_initialized():
-        i = i * dist.get_world_size() + dist.get_rank()
-    return f"_long_horizon/sequence_{i}"
+VIDEO_TAG = "_long_horizon/sequence"
 
 
 def get_log_dir(log_dir):
@@ -180,7 +177,7 @@ def evaluate_sequence(
     env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
     if record:
         caption = " | ".join(eval_sequence) if cfg.use_caption else ""
-        rollout_video.new_video(tag=get_video_tag(i), caption=caption)
+        rollout_video.new_video(tag=VIDEO_TAG, caption=caption)
     success_counter = 0
     if cfg.debug:
         time.sleep(1)
@@ -275,8 +272,8 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             data = model.last_chunk_data
             
             timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            tag_clean = get_video_tag(i).replace("/", "_")
-            base_name = f"{tag_clean}_{subtask}_seed{cfg.seed}_step{chunk_start_step}"
+            tag_clean = VIDEO_TAG.replace("/", "_")
+            base_name = f"{tag_clean}_{i}_{subtask}_seed{cfg.seed}_step{chunk_start_step}"
             
             # Use background saver for video and data
             bg_saver.save(save_video_and_data, base_name, data['ai_video_frames'], data, save_dir, cfg.seed, subtask, tag_clean, i, timestamp)
