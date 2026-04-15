@@ -1,0 +1,43 @@
+# DPO Training Config for SVD
+pretrained_model_path: "checkpoint/svd-robot-calvin"
+text_encoder_path: "checkpoint/clip"
+metadata_path: "checkpoint/dp-calvin/logs/2026-04-13_20-23-44/metadata.json"
+output_dir: "dpo_training/output"
+
+# DPO Dataset settings
+group_by: 
+  - sequence
+  - step
+metric: depth_consistency
+metric_type: "min" # "max" if higher is better (e.g. success), "min" if lower is better (e.g. error)
+
+# Training hyperparameters
+epochs: 10
+batch_size: 1
+gradient_accumulation_steps: 4
+learning_rate: 1e-5
+beta: 0.1 # DPO beta parameter
+seed: 42
+mixed_precision: "fp16"
+
+# LoRA settings
+use_lora: true
+lora_rank: 16
+lora_alpha: 32
+lora_target_modules:
+  - to_k
+  - to_q
+  - to_v
+  - out
+  - proj
+  - conv_in
+  - conv_out
+
+# Video settings (must match SVD training)
+fps: 6
+motion_bucket_id: 127
+max_length: 20
+
+# Logging
+log_interval: 10
+save_interval: 100
