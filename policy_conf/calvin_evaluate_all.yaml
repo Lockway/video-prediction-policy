@@ -30,6 +30,7 @@ model:
   Former_num_time_embeds: 16
   num_latents: 224
   text_encoder_path:
+  video_lora_path: dpo_training/output/checkpoint-1700
   pretrained_model_path: /home/disk2/gyj/hyc_ckpt/svd_2camera/checkpoint-100000
   use_Former: 3d
   timestep: 1
@@ -60,8 +61,8 @@ eval_cfg_overwrite:
     voltron_cache: /home/disk2/gyj/code/mdt_policy/pretrained_model_weights
 
 ep_len: 360
-num_sequences: 1  # Default: 1000
-num_videos: 1
+num_sequences: 100  # Default: 1000
+num_videos: 100
 lang_embeddings: null
 render: False
 log_wandb: True
@@ -91,7 +92,7 @@ slurm: false
 min_window_size: 21 # 21
 max_window_size: 50
 batch_size: 38
-seed: 242
+seed: [242, 42]
 devices: 4
 goal_window_size: 1
 p_last_state: 0

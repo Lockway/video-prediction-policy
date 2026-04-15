@@ -473,6 +473,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--video_model_path", type=str, default="")
+    parser.add_argument("--video_lora_path", type=str, default=None)
     parser.add_argument("--action_model_folder", type=str, default="")
     parser.add_argument("--clip_model_path", type=str, default="")
     parser.add_argument("--calvin_abc_dir", type=str, default="")
@@ -482,6 +483,7 @@ if __name__ == "__main__":
     with initialize(config_path="../policy_conf", job_name="calvin_evaluate_all.yaml"):
         cfg = compose(config_name="calvin_evaluate_all.yaml")
     cfg.model.pretrained_model_path = args.video_model_path
+    cfg.model.video_lora_path = args.video_lora_path
     cfg.train_folder = args.action_model_folder
     cfg.model.text_encoder_path = args.clip_model_path
     cfg.root_data_dir = args.calvin_abc_dir
