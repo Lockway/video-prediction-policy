@@ -141,3 +141,5 @@ video_output
 
 # Large models
 checkpoint
+dpo_training/output
+dpo_training/__pycache__
