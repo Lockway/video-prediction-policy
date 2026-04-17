@@ -481,6 +481,7 @@ if __name__ == "__main__":
     parser.add_argument("--clip_model_path", type=str, default=None)
     parser.add_argument("--calvin_abc_dir", type=str, default=None)
     parser.add_argument("--start_sequence", type=int, default=None)
+    parser.add_argument("--device", type=int, default=None)
     
     args = parser.parse_args()
     
@@ -499,6 +500,8 @@ if __name__ == "__main__":
         cfg.root_data_dir = args.calvin_abc_dir
     if args.start_sequence is not None:
         cfg.start_sequence = args.start_sequence
+    if args.device is not None:
+        cfg.device = args.device
     main(cfg)
 
     # python policy_evaluation/calvin_evaluate.py --video_model_path /home/disk2/gyj/hyc_ckpt/svd_2camera/checkpoint-100000 --action_model_folder /home/disk2/gyj/hyccode/Video-Prediction-Policy/checkpoint/alllayer1 --clip_model_path /home/disk2/gyj/hyc_ckpt/llm/clip-vit-base-patch32 --calvin_abc_dir /home/disk2/gyj/task_ABC_D
