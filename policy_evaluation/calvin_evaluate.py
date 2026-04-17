@@ -60,7 +60,8 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
     if log_dir is None:
         log_dir = get_log_dir(cfg.train_folder)
 
-    sequences = get_sequences(cfg.num_sequences)
+    start_idx = cfg.get("start_sequence", 0)
+    sequences = get_sequences(cfg.num_sequences + start_idx)[start_idx:]
 
     current_data = {}
     ranking = {}
@@ -133,7 +134,8 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     else:
         rollout_video = None
 
-    eval_sequences = get_sequences(cfg.num_sequences)
+    start_idx = cfg.get("start_sequence", 0)
+    eval_sequences = get_sequences(cfg.num_sequences + start_idx)[start_idx:]
 
     results = []
     plans = defaultdict(list)
@@ -143,9 +145,10 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
         eval_sequences = tqdm(eval_sequences, position=0, leave=True)
 
     for i, (initial_state, eval_sequence) in enumerate(eval_sequences):
+        abs_i = i + start_idx
         record = i < num_videos
         result = evaluate_sequence(
-            env, model, task_oracle, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, i, save_dir=save_dir
+            env, model, task_oracle, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, abs_i, save_dir=save_dir
         )
         results.append(result)
         if record:
@@ -157,7 +160,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
             description += f" Average: {average_rate:.1f} |"
             eval_sequences.set_description(description)
         if result < cfg.record_ths and record:
-            rollout_video._log_currentvideos_to_file(f"{i}_seed{cfg.seed}", save_as_video=True)
+            rollout_video._log_currentvideos_to_file(f"{abs_i}_seed{cfg.seed}", save_as_video=True)
 
     #if num_videos > 0:
     #    print('save_video_2:',rollout_video.save_dir)
@@ -477,6 +480,7 @@ if __name__ == "__main__":
     parser.add_argument("--action_model_folder", type=str, default="")
     parser.add_argument("--clip_model_path", type=str, default="")
     parser.add_argument("--calvin_abc_dir", type=str, default="")
+    parser.add_argument("--start_sequence", type=int, default=None)
     
     args = parser.parse_args()
     
@@ -487,6 +491,8 @@ if __name__ == "__main__":
     cfg.train_folder = args.action_model_folder
     cfg.model.text_encoder_path = args.clip_model_path
     cfg.root_data_dir = args.calvin_abc_dir
+    if args.start_sequence is not None:
+        cfg.start_sequence = args.start_sequence
     main(cfg)
 
     # python policy_evaluation/calvin_evaluate.py --video_model_path /home/disk2/gyj/hyc_ckpt/svd_2camera/checkpoint-100000 --action_model_folder /home/disk2/gyj/hyccode/Video-Prediction-Policy/checkpoint/alllayer1 --clip_model_path /home/disk2/gyj/hyc_ckpt/llm/clip-vit-base-patch32 --calvin_abc_dir /home/disk2/gyj/task_ABC_D

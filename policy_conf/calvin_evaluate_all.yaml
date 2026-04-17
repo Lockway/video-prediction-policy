@@ -61,8 +61,9 @@ eval_cfg_overwrite:
     voltron_cache: /home/disk2/gyj/code/mdt_policy/pretrained_model_weights
 
 ep_len: 360
-num_sequences: 100  # Default: 1000
-num_videos: 100
+num_sequences: 1  # Default: 1000
+start_sequence: 0
+num_videos: 1
 lang_embeddings: null
 render: False
 log_wandb: True
@@ -92,7 +93,7 @@ slurm: false
 min_window_size: 21 # 21
 max_window_size: 50
 batch_size: 38
-seed: [242, 42]
+seed: [242]
 devices: 4
 goal_window_size: 1
 p_last_state: 0
