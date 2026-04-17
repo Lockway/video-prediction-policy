@@ -66,6 +66,7 @@ class VPP_Policy(pl.LightningModule):
             obs_seq_len: int = 1,
             action_dim: int = 7,
             action_seq_len: int = 10,
+            video_lora_path: Optional[str] = None,
     ):
         super(VPP_Policy, self).__init__()
         self.latent_dim = latent_dim
@@ -124,6 +125,11 @@ class VPP_Policy(pl.LightningModule):
 
         pipeline, tokenizer, feature_extractor, train_scheduler, vae_processor, text_encoder, vae, unet = load_primary_models(
             pretrained_model_path , eval = True)
+        
+        if video_lora_path is not None and video_lora_path != "":
+            from peft import PeftModel
+            pipeline.unet = PeftModel.from_pretrained(pipeline.unet, video_lora_path)
+            print(f"Loaded Video LoRA from {video_lora_path}")
 
         #text_encoder = CLIPTextModelWithProjection.from_pretrained("/cephfs/shared/llm/clip-vit-base-patch32")
         #tokenizer = AutoTokenizer.from_pretrained("/cephfs/shared/llm/clip-vit-base-patch32", use_fast=False)
