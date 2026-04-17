@@ -29,9 +29,9 @@ model:
   Former_dim_head: 64
   Former_num_time_embeds: 16
   num_latents: 224
-  text_encoder_path:
+  text_encoder_path: checkpoint/clip
   video_lora_path: dpo_training/output/checkpoint-1700
-  pretrained_model_path: /home/disk2/gyj/hyc_ckpt/svd_2camera/checkpoint-100000
+  pretrained_model_path: checkpoint/svd-robot-calvin
   use_Former: 3d
   timestep: 1
   use_all_layer: True
@@ -70,8 +70,7 @@ log_wandb: True
 wandb:
   entity: omeryagmurlu
 debug: False
-dataset_path: /home/disk2/gyj/task_ABC_D
-train_folder: /home/disk2/gyj/hyccode/Video-Prediction-Policy/checkpoint/alllayer1
+train_folder: checkpoint/dp-calvin
 model_name: mdt_test
 device: 1
 sampler_type: ddim
@@ -103,7 +102,7 @@ window_sampling_strategy: 'geometric'
 num_workers: 12
 img_gen_frame_diff: 3
 benchmark_name: calvin_abcd # calvin_abcd
-root_data_dir: /cephfs/shared/hyc/data/calvin/task_ABC_D
+root_data_dir: /home/hdlee/video-prediction-policy/calvin/dataset/task_ABC_D
 # sigma_min: null
 # sigma_max: null
 # noise_scheduler: null

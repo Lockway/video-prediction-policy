@@ -475,22 +475,28 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--video_model_path", type=str, default="")
+    parser.add_argument("--video_model_path", type=str, default=None)
     parser.add_argument("--video_lora_path", type=str, default=None)
-    parser.add_argument("--action_model_folder", type=str, default="")
-    parser.add_argument("--clip_model_path", type=str, default="")
-    parser.add_argument("--calvin_abc_dir", type=str, default="")
+    parser.add_argument("--action_model_folder", type=str, default=None)
+    parser.add_argument("--clip_model_path", type=str, default=None)
+    parser.add_argument("--calvin_abc_dir", type=str, default=None)
     parser.add_argument("--start_sequence", type=int, default=None)
     
     args = parser.parse_args()
     
     with initialize(config_path="../policy_conf", job_name="calvin_evaluate_all.yaml"):
         cfg = compose(config_name="calvin_evaluate_all.yaml")
-    cfg.model.pretrained_model_path = args.video_model_path
-    cfg.model.video_lora_path = args.video_lora_path
-    cfg.train_folder = args.action_model_folder
-    cfg.model.text_encoder_path = args.clip_model_path
-    cfg.root_data_dir = args.calvin_abc_dir
+    
+    if args.video_model_path is not None:
+        cfg.model.pretrained_model_path = args.video_model_path
+    if args.video_lora_path is not None:
+        cfg.model.video_lora_path = args.video_lora_path
+    if args.action_model_folder is not None:
+        cfg.train_folder = args.action_model_folder
+    if args.clip_model_path is not None:
+        cfg.model.text_encoder_path = args.clip_model_path
+    if args.calvin_abc_dir is not None:
+        cfg.root_data_dir = args.calvin_abc_dir
     if args.start_sequence is not None:
         cfg.start_sequence = args.start_sequence
     main(cfg)
