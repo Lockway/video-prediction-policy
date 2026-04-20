@@ -15,6 +15,7 @@ from transformers import AutoTokenizer, CLIPTextModelWithProjection
 import numpy as np
 import math
 from einops import rearrange, repeat
+from datetime import datetime
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -102,6 +103,10 @@ def main():
     args = parser.parse_args()
     
     cfg = OmegaConf.load(args.config)
+    
+    # Update output directory with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cfg.output_dir = os.path.join(cfg.output_dir, timestamp)
     
     # Ensure output directory exists
     os.makedirs(cfg.output_dir, exist_ok=True)
