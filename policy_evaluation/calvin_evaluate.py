@@ -82,12 +82,14 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
         cnt_success = Counter()
         cnt_fail = Counter()
 
-        for result, (_, sequence) in zip(results, sequences):
+        failed_sequences = []
+        for i, (result, (_, sequence)) in enumerate(zip(results, sequences)):
             for successful_tasks in sequence[:result]:
                 cnt_success[successful_tasks] += 1
             if result < len(sequence):
                 failed_task = sequence[result]
                 cnt_fail[failed_task] += 1
+                failed_sequences.append(i + start_idx)
 
         total = cnt_success + cnt_fail
         task_info = {}
@@ -95,7 +97,13 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
             task_info[task] = {"success": cnt_success[task], "total": total[task]}
             print(f"{task}: {cnt_success[task]} / {total[task]} |  SR: {cnt_success[task] / total[task] * 100:.1f}%")
 
-        data = {"avg_seq_len": avg_seq_len, "chain_sr": chain_sr, "task_info": task_info, "seed": cfg.seed}
+        data = {
+            "avg_seq_len": avg_seq_len,
+            "chain_sr": chain_sr,
+            "task_info": task_info,
+            "seed": cfg.seed,
+            "failed_sequences": failed_sequences,
+        }
         # wandb.log({"avrg_performance/avg_seq_len": avg_seq_len, "avrg_performance/chain_sr": chain_sr, "detailed_metrics/task_info": task_info})
         # Error: You must call wandb.init() before wandb.log()
         current_data[f"{epoch}_seed{cfg.seed}"] = data
