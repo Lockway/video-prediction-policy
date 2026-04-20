@@ -632,6 +632,38 @@ class VPP_Policy(pl.LightningModule):
         )
         return act_seq, perceptual_features
 
+    def encode_real_video(self, rgb_static, rgb_gripper):
+        """
+        Encodes a sequence of real frames into the VAE latent space.
+        Args:
+            rgb_static: [num_frames, 3, H, W]
+            rgb_gripper: [num_frames, 3, H, W]
+        Returns:
+            latents: [2, num_frames, 4, H/8, W/8]
+        """
+        # Ensure correct dimensions (b, f, c, h, w)
+        # Expected input is [F, C, H, W]
+        rgb_static_batch = rgb_static.unsqueeze(0) # [1, F, C, H, W]
+        rgb_gripper_batch = rgb_gripper.unsqueeze(0) # [1, F, C, H, W]
+        
+        input_rgb = torch.cat([rgb_static_batch, rgb_gripper_batch], dim=0) # [2, F, 3, H, W]
+        
+        device = self.device
+        dtype = self.TVP_encoder.pipeline.vae.dtype
+        vae = self.TVP_encoder.pipeline.vae
+        
+        # Flatten for VAE: [batch*frames, channels, height, width]
+        pixel_values = rearrange(input_rgb, 'b f c h w -> (b f) c h w').to(dtype).to(device)
+        
+        # Encode using the pipeline's helper which handles scaling
+        with torch.no_grad():
+            latents = self.TVP_encoder.pipeline._encode_vae_image(pixel_values, device, 1, False)
+        
+        # Reshape back to [batch, frames, channels, height, width]
+        latents = rearrange(latents, '(b f) c h w -> b f c h w', b=2, f=rgb_static.shape[0])
+        
+        return latents
+
     def generate_ai_video(self, obs, goal):
         """
         Generate a full 16-frame AI video prediction for visualization.

@@ -126,7 +126,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     val_annotations = cfg.annotations
     
     if save_dir is not None:
-        for folder in ["rollout", "action", "condition", "latent"]:
+        for folder in ["rollout", "action", "condition", "latent_fake", "latent_real"]:
             os.makedirs(save_dir / folder, exist_ok=True)
 
     # video stuff
@@ -256,14 +256,16 @@ class BackgroundSaver:
 
 bg_saver = BackgroundSaver()
 
-def save_video_and_data(base_name, ai_frames, data, save_dir, cfg_seed, subtask, tag_clean, i, timestamp):
+def save_video_and_data(base_name, ai_frames, data, real_latents, save_dir, cfg_seed, subtask, tag_clean, i, timestamp):
     # [3] actions, latents, condition: .pt files
     action_filename = f"{base_name}_actions.pt"
-    latent_filename = f"{base_name}_latents.pt"
+    latent_fake_filename = f"{base_name}_latents_fake.pt"
+    latent_real_filename = f"{base_name}_latents_real.pt"
     condition_filename = f"{base_name}_condition.pt"
     
     torch.save(data['actions'].cpu(), save_dir / "action" / action_filename)
-    torch.save(data['latents'].cpu(), save_dir / "latent" / latent_filename)
+    torch.save(data['latents'].cpu(), save_dir / "latent_fake" / latent_fake_filename)
+    torch.save(real_latents.cpu(), save_dir / "latent_real" / latent_real_filename)
     torch.save(data['condition'].cpu(), save_dir / "condition" / condition_filename)
 
 def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotations, record=False, rollout_video=None, i=0, save_dir=None):
@@ -281,6 +283,7 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
 
     current_sequence_metadata = []
     cached_bottom_row = None
+    active_chunks = []
 
     for step in range(cfg.ep_len):
         action = model.step(obs, goal)
@@ -294,11 +297,9 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             tag_clean = VIDEO_TAG.replace("/", "_")
             base_name = f"{tag_clean}_{i}_{subtask}_seed{cfg.seed}_step{chunk_start_step}"
             
-            # Use background saver for data
-            bg_saver.save(save_video_and_data, base_name, data['ai_video_frames'], data, save_dir, cfg.seed, subtask, tag_clean, i, timestamp)
-            
             action_filename = f"{base_name}_actions.pt"
-            latent_filename = f"{base_name}_latents.pt"
+            latent_fake_filename = f"{base_name}_latents_fake.pt"
+            latent_real_filename = f"{base_name}_latents_real.pt"
             condition_filename = f"{base_name}_condition.pt"
             
             metadata_entry = {
@@ -307,7 +308,8 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
                 "task": subtask,
                 "sequence": i,
                 "step": chunk_start_step,
-                "latent_path": str(save_dir / "latent" / latent_filename),
+                "latent_fake_path": str(save_dir / "latent_fake" / latent_fake_filename),
+                "latent_real_path": str(save_dir / "latent_real" / latent_real_filename),
                 "condition_path": str(save_dir / "condition" / condition_filename),
                 "action_path": str(save_dir / "action" / action_filename),
                 "seed": cfg.seed,
@@ -318,9 +320,48 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             current_sequence_metadata.append(metadata_entry)
             model.metadata_list.append(metadata_entry)
             cached_bottom_row = None # Reset cache when new chunk starts
+            
+            # Initialize pending chunk data
+            active_chunks.append({
+                'base_name': base_name,
+                'data': data,
+                'frames_static': [],
+                'frames_gripper': [],
+                'timestamp': timestamp,
+                'tag_clean': tag_clean,
+                'metadata_entry': metadata_entry
+            })
+
+        # Collect frames for active chunks
+        if record and save_dir is not None:
+            # Squeeze extra [1, 1, ...] dimensions if present
+            curr_static = obs["rgb_obs"]["rgb_static"].detach().cpu()
+            while curr_static.ndim > 3:
+                curr_static = curr_static.squeeze(0)
+            
+            curr_gripper = obs["rgb_obs"]["rgb_gripper"].detach().cpu()
+            while curr_gripper.ndim > 3:
+                curr_gripper = curr_gripper.squeeze(0)
+                
+            for chunk in active_chunks:
+                if len(chunk['frames_static']) < 16:
+                    chunk['frames_static'].append(curr_static)
+                    chunk['frames_gripper'].append(curr_gripper)
 
         obs, _, _, current_info = env.step(action)
         
+        # Save finished chunks
+        finished_chunks = [c for c in active_chunks if len(c['frames_static']) == 16]
+        for chunk in finished_chunks:
+            # Encode real frames
+            real_static = torch.stack(chunk['frames_static'], dim=0).to(model.device) # [16, 3, 200, 200]
+            real_gripper = torch.stack(chunk['frames_gripper'], dim=0).to(model.device)
+            real_latents = model.encode_real_video(real_static, real_gripper)
+            
+            # Save
+            bg_saver.save(save_video_and_data, chunk['base_name'], chunk['data']['ai_video_frames'], chunk['data'], real_latents, save_dir, cfg.seed, subtask, chunk['tag_clean'], i, chunk['timestamp'])
+            active_chunks.remove(chunk)
+
         # check if current step solves a task
         current_task_info = task_oracle.get_task_info_for_set(start_info, current_info, {subtask})
         if len(current_task_info) > 0:
@@ -333,6 +374,17 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
                 print(colored("success", "green"), end=" ")
             if record and cfg.use_caption:
                 rollout_video.add_language_instruction(lang_annotation)
+            
+            # Finalize remaining chunks for this subtask
+            for chunk in active_chunks:
+                while len(chunk['frames_static']) < 16:
+                    chunk['frames_static'].append(chunk['frames_static'][-1])
+                    chunk['frames_gripper'].append(chunk['frames_gripper'][-1])
+                real_static = torch.stack(chunk['frames_static'], dim=0).to(model.device)
+                real_gripper = torch.stack(chunk['frames_gripper'], dim=0).to(model.device)
+                real_latents = model.encode_real_video(real_static, real_gripper)
+                bg_saver.save(save_video_and_data, chunk['base_name'], chunk['data']['ai_video_frames'], chunk['data'], real_latents, save_dir, cfg.seed, subtask, chunk['tag_clean'], i, chunk['timestamp'])
+            
             return True
         
         if record:
@@ -369,6 +421,17 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             else:
                 top_row = torch.cat([static_rgb, gripper_rgb], dim=-1)
                 rollout_video.update(torch.cat([top_row, torch.zeros_like(top_row)], dim=-2))
+
+    if record and save_dir is not None:
+        # Finalize remaining chunks if subtask failed
+        for chunk in active_chunks:
+            while len(chunk['frames_static']) < 16:
+                chunk['frames_static'].append(chunk['frames_static'][-1])
+                chunk['frames_gripper'].append(chunk['frames_gripper'][-1])
+            real_static = torch.stack(chunk['frames_static'], dim=0).to(model.device)
+            real_gripper = torch.stack(chunk['frames_gripper'], dim=0).to(model.device)
+            real_latents = model.encode_real_video(real_static, real_gripper)
+            bg_saver.save(save_video_and_data, chunk['base_name'], chunk['data']['ai_video_frames'], chunk['data'], real_latents, save_dir, cfg.seed, subtask, chunk['tag_clean'], i, chunk['timestamp'])
 
     if cfg.debug:
         print(colored("fail", "red"), end=" ")
