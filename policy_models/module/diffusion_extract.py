@@ -161,6 +161,7 @@ class Diffusion_feature_extractor(nn.Module):
             extract_layer_idx: Union[torch.Tensor, float, int],
             max_length = 20,
             encoder_hidden_states = None,
+            decode = True,
     ):
         height = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
         width = self.pipeline.unet.config.sample_size * self.pipeline.vae_scale_factor //3
@@ -234,9 +235,13 @@ class Diffusion_feature_extractor(nn.Module):
 
             latents = self.pipeline.scheduler.step(noise_pred, t, latents).prev_sample
 
+        # Return latents without decoding if decode is False
+        decoded_latents = latents.clone()
+        if not decode:
+            return None, decoded_latents
+
         # Decode latents
         b, f, c, h, w = latents.shape
-        decoded_latents = latents.clone()
         latents_to_decode = latents / vae.config.scaling_factor
 
         # Decode in chunks to avoid OOM

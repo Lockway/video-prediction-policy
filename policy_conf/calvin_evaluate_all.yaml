@@ -19,6 +19,7 @@ model:
   act_window_size: 10
   video_speed_up: 1
   video_speed_down: 4
+  decode_video: false
   obs_seq_len: 1
   action_dim: 7
   action_seq_len: 10
@@ -30,7 +31,7 @@ model:
   Former_num_time_embeds: 16
   num_latents: 224
   text_encoder_path: checkpoint/clip
-  video_lora_path: dpo_training/output/checkpoint-1700
+  video_lora_path: # dpo_training/output/checkpoint-1700
   pretrained_model_path: checkpoint/svd-robot-calvin
   use_Former: 3d
   timestep: 1

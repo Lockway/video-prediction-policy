@@ -67,6 +67,7 @@ class VPP_Policy(pl.LightningModule):
             action_dim: int = 7,
             action_seq_len: int = 10,
             video_lora_path: Optional[str] = None,
+            decode_video: bool = True,
     ):
         super(VPP_Policy, self).__init__()
         self.latent_dim = latent_dim
@@ -75,6 +76,7 @@ class VPP_Policy(pl.LightningModule):
 
         self.video_speed_up = video_speed_up
         self.video_speed_down = video_speed_down
+        self.decode_video = decode_video
 
         self.act_window_size = act_window_size
         self.action_dim = action_dim
@@ -691,7 +693,8 @@ class VPP_Policy(pl.LightningModule):
                 with torch.no_grad():
                     pred_video, video_latents = self.TVP_encoder.predict_video(input_rgb, None, self.timestep, 
                                                                    self.extract_layer_idx, max_length=self.max_length,
-                                                                   encoder_hidden_states=self.cached_text_embedding)
+                                                                   encoder_hidden_states=self.cached_text_embedding,
+                                                                   decode=self.decode_video)
                     
                     perceptual_features = self.TVP_encoder(input_rgb, None, self.timestep,
                                                                    self.extract_layer_idx, all_layer=self.use_all_layer,
