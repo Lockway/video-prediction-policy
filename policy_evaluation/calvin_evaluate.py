@@ -126,7 +126,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     val_annotations = cfg.annotations
     
     if save_dir is not None:
-        for folder in ["rollout", "videos", "action", "condition", "latent"]:
+        for folder in ["rollout", "action", "condition", "latent"]:
             os.makedirs(save_dir / folder, exist_ok=True)
 
     # video stuff
@@ -188,9 +188,9 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
                 print(f"Warning: Could not load existing metadata: {e}")
         
         # Avoid duplicate entries if running the same seed twice
-        # We can check by video_path or some unique ID
-        seen_videos = {entry.get("video_path") for entry in existing_metadata}
-        new_entries = [entry for entry in model.metadata_list if entry.get("video_path") not in seen_videos]
+        # We can check by action_path or some unique ID
+        seen_actions = {entry.get("action_path") for entry in existing_metadata}
+        new_entries = [entry for entry in model.metadata_list if entry.get("action_path") not in seen_actions]
         
         combined_metadata = existing_metadata + new_entries
         with open(metadata_path, "w") as f:
@@ -257,16 +257,6 @@ class BackgroundSaver:
 bg_saver = BackgroundSaver()
 
 def save_video_and_data(base_name, ai_frames, data, save_dir, cfg_seed, subtask, tag_clean, i, timestamp):
-    # [2] videos: ai-generated videos with different views, temporally concatenated
-    concat_frames = torch.cat([ai_frames[0], ai_frames[1]], dim=0) # [32, 3, H, W]
-    
-    video_filename = f"{base_name}.mp4"
-    video_path = save_dir / "videos" / video_filename
-    
-    video_np = (concat_frames.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
-    clip = ImageSequenceClip(list(video_np), fps=30)
-    clip.write_videofile(str(video_path), codec='libx264', logger=None)
-    
     # [3] actions, latents, condition: .pt files
     action_filename = f"{base_name}_actions.pt"
     latent_filename = f"{base_name}_latents.pt"
@@ -304,11 +294,8 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             tag_clean = VIDEO_TAG.replace("/", "_")
             base_name = f"{tag_clean}_{i}_{subtask}_seed{cfg.seed}_step{chunk_start_step}"
             
-            # Use background saver for video and data
+            # Use background saver for data
             bg_saver.save(save_video_and_data, base_name, data['ai_video_frames'], data, save_dir, cfg.seed, subtask, tag_clean, i, timestamp)
-            
-            video_filename = f"{base_name}.mp4"
-            video_path = save_dir / "videos" / video_filename
             
             action_filename = f"{base_name}_actions.pt"
             latent_filename = f"{base_name}_latents.pt"
@@ -320,12 +307,10 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
                 "task": subtask,
                 "sequence": i,
                 "step": chunk_start_step,
-                "video_path": str(video_path),
                 "latent_path": str(save_dir / "latent" / latent_filename),
                 "condition_path": str(save_dir / "condition" / condition_filename),
                 "action_path": str(save_dir / "action" / action_filename),
                 "seed": cfg.seed,
-                "num_frames": 32, # 16 * 2 views
                 "time": timestamp,
                 "success": 0, # Default to 0, will update if task succeeds in this chunk
                 "robot_obs": obs["robot_obs_raw"].cpu().numpy().tolist(), # Initial robot state for this chunk
