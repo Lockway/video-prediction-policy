@@ -1,18 +1,14 @@
 # DPO Training Config for SVD
 pretrained_model_path: "checkpoint/svd-robot-calvin"
 text_encoder_path: "checkpoint/clip"
-metadata_path: "checkpoint/dp-calvin/logs/2026-04-13_20-23-44/metadata.json"
+metadata_path: "checkpoint/dp-calvin/logs/2026-04-20_18-19-24/metadata.json"
 output_dir: "dpo_training/output"
 
-# DPO Dataset settings
-group_by: 
-  - sequence
-  - step
-metric: depth_consistency
-metric_type: "min" # "max" if higher is better (e.g. success), "min" if lower is better (e.g. error)
+# DPO Dataset settings are now hardcoded in the script for simplicity
+# (Pairs are formed by taking latent_real vs latent_fake for success:0 entries)
 
 # Training hyperparameters
-epochs: 10
+epochs: 3
 batch_size: 1
 gradient_accumulation_steps: 4
 learning_rate: 1e-5

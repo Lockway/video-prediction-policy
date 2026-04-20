@@ -20,42 +20,21 @@ from datetime import datetime
 logger = get_logger(__name__, log_level="INFO")
 
 class DPODataset(Dataset):
-    def __init__(self, metadata_path, group_by=['task', 'original_video_path'], metric='success', metric_type='max'):
+    def __init__(self, metadata_path):
         super().__init__()
         with open(metadata_path, 'r') as f:
             self.metadata = json.load(f)
         
-        # Group entries to form pairs
-        self.groups = {}
-        for entry in self.metadata:
-            group_key = tuple(entry[k] for k in group_by)
-            if group_key not in self.groups:
-                self.groups[group_key] = []
-            self.groups[group_key].append(entry)
-        
         self.pairs = []
-        for key, entries in self.groups.items():
-            if len(entries) < 2:
-                continue
-                
-            # For each pair of entries in the same group, determine preferred vs rejected
-            for i in range(len(entries)):
-                for j in range(i + 1, len(entries)):
-                    e1 = entries[i]
-                    e2 = entries[j]
-                    
-                    val1 = e1[metric]
-                    val2 = e2[metric]
-                    
-                    if val1 == val2:
-                        continue
-                        
-                    if metric_type == 'max':
-                        preferred, rejected = (e1, e2) if val1 > val2 else (e2, e1)
-                    else: # metric_type == 'min'
-                        preferred, rejected = (e1, e2) if val1 < val2 else (e2, e1)
-                        
-                    self.pairs.append({'preferred': preferred, 'rejected': rejected})
+        for entry in self.metadata:
+            if entry.get('success', 1) == 0:
+                # For failed episodes, we prefer the ground truth (real) over the generated (fake) video
+                self.pairs.append({
+                    'preferred_path': entry['latent_real_path'],
+                    'rejected_path': entry['latent_fake_path'],
+                    'task': entry['task'],
+                    'condition_path': entry['condition_path']
+                })
         
         print(f"Total DPO pairs found: {len(self.pairs)}")
 
@@ -64,19 +43,17 @@ class DPODataset(Dataset):
 
     def __getitem__(self, idx):
         pair = self.pairs[idx]
-        p_meta = pair['preferred']
-        r_meta = pair['rejected']
         
         # Load latents
         # Shapes are usually [2, 16, 4, 32, 32] -> [views, frames, channels, h, w]
-        p_latents = torch.load(p_meta['latent_path'])
-        r_latents = torch.load(r_meta['latent_path'])
+        p_latents = torch.load(pair['preferred_path'])
+        r_latents = torch.load(pair['rejected_path'])
         
         return {
             'preferred_latent': p_latents, # [2, 16, 4, 32, 32]
             'rejected_latent': r_latents,  # [2, 16, 4, 32, 32]
-            'text': p_meta['task'],
-            'condition_path': p_meta['condition_path']
+            'text': pair['task'],
+            'condition_path': pair['condition_path']
         }
 
 def get_log_probs(unet, noisy_latents, timesteps, encoder_hidden_states, added_time_ids, target_latents, pipeline):
@@ -148,7 +125,7 @@ def main():
     optimizer = torch.optim.AdamW(unet.parameters(), lr=cfg.learning_rate)
     
     # Dataset
-    dataset = DPODataset(cfg.metadata_path, group_by=list(cfg.group_by), metric=cfg.metric, metric_type=cfg.metric_type)
+    dataset = DPODataset(cfg.metadata_path)
     dataloader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
     
     unet, optimizer, dataloader = accelerator.prepare(unet, optimizer, dataloader)
