@@ -121,13 +121,107 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
     print(f"Best model: epoch {max(ranking, key=ranking.get)} with average sequences length of {max(ranking.values())}")
 
 
-def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=None):
+def save_incremental_results(results, cfg, checkpoint, log_dir):
+    if log_dir is None:
+        return
+
+    if "=" in checkpoint.stem:
+        epoch = checkpoint.stem.split("=")[1]
+    else:
+        epoch = checkpoint.stem
+
+    start_idx = cfg.get("start_sequence", 0)
+    sequences = get_sequences(cfg.num_sequences + start_idx)[start_idx:]
+    
+    # Calculate stats for current partial results
+    avg_seq_len = np.mean(results) if len(results) > 0 else 0
+    chain_sr = {i + 1: sr for i, sr in enumerate(count_success(results))} if len(results) > 0 else {}
+    
+    cnt_success = Counter()
+    cnt_fail = Counter()
+    failed_sequences = []
+    
+    for i, (result, (_, sequence)) in enumerate(zip(results, sequences)):
+        for successful_tasks in sequence[:result]:
+            cnt_success[successful_tasks] += 1
+        if result < len(sequence):
+            failed_task = sequence[result]
+            cnt_fail[failed_task] += 1
+            failed_sequences.append(i + start_idx)
+
+    total = cnt_success + cnt_fail
+    task_info = {}
+    for task in total:
+        task_info[task] = {"success": cnt_success[task], "total": total[task]}
+
+    data = {
+        "avg_seq_len": avg_seq_len,
+        "chain_sr": chain_sr,
+        "task_info": task_info,
+        "seed": cfg.seed,
+        "failed_sequences": failed_sequences,
+        "evaluated_sequences": len(results)
+    }
+
+    current_data = {f"{epoch}_seed{cfg.seed}": data}
+    
+    previous_data = {}
+    results_path = log_dir / "results.json"
+    if results_path.exists():
+        try:
+            with open(results_path, "r") as file:
+                previous_data = json.load(file)
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+            
+    json_data = {**previous_data, **current_data}
+    with open(results_path, "w") as file:
+        json.dump(json_data, file, indent=2)
+
+
+def save_incremental_metadata(model, save_dir):
+    if save_dir is None:
+        return
+        
+    metadata_path = save_dir / "metadata.json"
+    existing_metadata = []
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                existing_metadata = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+        except Exception as e:
+            print(f"Warning: Could not load existing metadata: {e}")
+    
+    seen_actions = {entry.get("action_path") for entry in existing_metadata}
+    new_entries = [entry for entry in model.metadata_list if entry.get("action_path") not in seen_actions]
+    
+    if new_entries:
+        combined_metadata = existing_metadata + new_entries
+        with open(metadata_path, "w") as f:
+            json.dump(combined_metadata, f, indent=2)
+        model.metadata_list = []
+
+
+def evaluate_policy(model, env, lang_embeddings, cfg, checkpoint, num_videos=0, save_dir=None):
     task_oracle = hydra.utils.instantiate(cfg.tasks)
     val_annotations = cfg.annotations
     
     if save_dir is not None:
         for folder in ["rollout", "action", "condition", "latent_fake", "latent_real"]:
             os.makedirs(save_dir / folder, exist_ok=True)
+            
+        # Initialize empty json files
+        results_path = save_dir / "results.json"
+        if not results_path.exists():
+            with open(results_path, "w") as f:
+                json.dump({}, f, indent=2)
+                
+        metadata_path = save_dir / "metadata.json"
+        if not metadata_path.exists():
+            with open(metadata_path, "w") as f:
+                json.dump([], f, indent=2)
 
     # video stuff
     if num_videos > 0:
@@ -169,6 +263,11 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
             eval_sequences.set_description(description)
         if result < cfg.record_ths and record:
             rollout_video._log_currentvideos_to_file(f"{abs_i}_seed{cfg.seed}", save_as_video=True)
+            
+        # Incremental save
+        if save_dir is not None:
+            save_incremental_metadata(model, save_dir)
+            save_incremental_results(results, cfg, checkpoint, save_dir)
 
     #if num_videos > 0:
     #    print('save_video_2:',rollout_video.save_dir)
@@ -177,24 +276,11 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     
     if save_dir is not None:
         metadata_path = save_dir / "metadata.json"
-        existing_metadata = []
-        if metadata_path.exists():
-            try:
-                with open(metadata_path, "r") as f:
-                    existing_metadata = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                pass
-            except Exception as e:
-                print(f"Warning: Could not load existing metadata: {e}")
+        with open(metadata_path, "r") as f:
+            final_metadata = json.load(f)
         
-        # Avoid duplicate entries if running the same seed twice
-        # We can check by action_path or some unique ID
-        seen_actions = {entry.get("action_path") for entry in existing_metadata}
-        new_entries = [entry for entry in model.metadata_list if entry.get("action_path") not in seen_actions]
-        
-        combined_metadata = existing_metadata + new_entries
-        with open(metadata_path, "w") as f:
-            json.dump(combined_metadata, f, indent=2)
+        # We can still output some info if needed, but the file is already updated.
+        print(f"Evaluation complete. Metadata saved to {metadata_path}")
             
     return results, plans
 
@@ -517,7 +603,7 @@ def main(cfg):
 
                 seed_results = {}
                 seed_plans = {}
-                seed_results[checkpoint], seed_plans[checkpoint] = evaluate_policy(model, env, lang_embeddings, cfg, num_videos=cfg.num_videos, save_dir=Path(log_dir))
+                seed_results[checkpoint], seed_plans[checkpoint] = evaluate_policy(model, env, lang_embeddings, cfg, checkpoint, num_videos=cfg.num_videos, save_dir=Path(log_dir))
                 print_and_save(seed_results, seed_plans, cfg, log_dir=log_dir)
             #run.finish()
 
