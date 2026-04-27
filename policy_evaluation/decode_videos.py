@@ -31,19 +31,20 @@ def decode_and_save_video(model, latent_path, output_path):
     
     with torch.no_grad():
         b, f, c, h, w = latents_to_decode.shape
-        # Flatten batch and frames for VAE decoder: (B*F, C, H, W)
-        latents_flat = rearrange(latents_to_decode, "b f c h w -> (b f) c h w")
         
-        # Decode in chunks to avoid OOM
+        # Decode in chunks along the batch dimension to avoid OOM and maintain temporal consistency
         decoded_list = []
-        chunk_size = 8
-        for i in range(0, latents_flat.shape[0], chunk_size):
-            chunk = latents_flat[i : i + chunk_size]
-            # Use the pipeline's VAE decoder
-            decoded = vae.decode(chunk, num_frames=f).sample
+        chunk_size = 1 # Process one video (all its frames) at a time
+        for i in range(0, b, chunk_size):
+            chunk = latents_to_decode[i : i + chunk_size] # [B_chunk, F, C, H, W]
+            b_c, f_c, c_c, h_c, w_c = chunk.shape
+            # Flatten batch and frames for VAE decoder: (B*F, C, H, W)
+            chunk_flat = rearrange(chunk, "b f c h w -> (b f) c h w")
+            # Use the pipeline's VAE decoder with the correct number of frames
+            decoded = vae.decode(chunk_flat, num_frames=f_c).sample
             decoded_list.append(decoded)
         
-        frames = torch.cat(decoded_list, dim=0) # [B*F, 3, H, W]
+        frames = torch.cat(decoded_list, dim=0) # [B*F, 3, H_out, W_out]
         # Post-process from [-1, 1] to [0, 1]
         frames = (frames / 2 + 0.5).clamp(0, 1)
         
@@ -97,19 +98,16 @@ def main():
     print(f"Found {len(failed_entries)} failed tasks. Initializing model for decoding...")
 
     # Use Hydra to load the configuration
-    from hydra import compose, initialize
-    # Ensure config_path is relative to this file
-    config_rel_path = "../policy_conf"
-    
-    # Initialize Hydra once
-    try:
-        initialize(config_path=config_rel_path, version_base=None)
-    except Exception as e:
-        # Hydra might already be initialized in some environments
-        pass
-        
-    cfg = compose(config_name="calvin_evaluate_all.yaml")
-    
+    from hydra import compose, initialize_config_dir
+    from hydra.core.global_hydra import GlobalHydra
+    config_dir = (Path(__file__).absolute().parents[1] / "policy_conf").as_posix()
+
+    if GlobalHydra.instance().is_initialized():
+        GlobalHydra.instance().clear()
+
+    with initialize_config_dir(config_dir=config_dir):
+        cfg = compose(config_name="calvin_evaluate_all.yaml")
+
     # Update config with correct folder if different
     cfg.train_folder = args.action_model_folder
     
