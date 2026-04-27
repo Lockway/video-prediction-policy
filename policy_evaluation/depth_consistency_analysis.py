@@ -59,8 +59,8 @@ def main():
             continue
             
         # Paths in metadata are usually relative or need fixing
-        video_name = Path(entry['video_path']).name
         action_name = Path(entry['action_path']).name
+        video_name = action_name.replace("_actions.pt", "_video.mp4")
         
         video_path = log_dir / "videos" / video_name
         action_path = log_dir / "action" / action_name
