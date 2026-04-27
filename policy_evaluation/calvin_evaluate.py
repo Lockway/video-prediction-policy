@@ -103,6 +103,7 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
             "task_info": task_info,
             "seed": cfg.seed,
             "failed_sequences": failed_sequences,
+            "evaluated_sequences": len(results)
         }
         # wandb.log({"avrg_performance/avg_seq_len": avg_seq_len, "avrg_performance/chain_sr": chain_sr, "detailed_metrics/task_info": task_info})
         # Error: You must call wandb.init() before wandb.log()
