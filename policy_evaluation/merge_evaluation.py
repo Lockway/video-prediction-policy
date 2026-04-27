@@ -71,8 +71,11 @@ def merge_results_data(all_data):
 
 @hydra.main(config_path="../policy_conf", config_name="merge_evaluation")
 def main(cfg: DictConfig):
+    # Use absolute paths or original CWD to avoid Hydra's directory shifting
+    original_cwd = Path(hydra.utils.get_original_cwd())
+    
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-    target_dir = Path(cfg.target_parent_dir) / timestamp
+    target_dir = original_cwd / cfg.target_parent_dir / timestamp
     
     print(f"Creating merged directory at: {target_dir}")
     subfolders = ["rollout", "action", "condition", "latent_fake", "latent_real"]
@@ -82,7 +85,7 @@ def main(cfg: DictConfig):
     merged_metadata = []
     all_results_data = []
     
-    source_dirs = [Path(d) for d in cfg.source_dirs]
+    source_dirs = [original_cwd / d for d in cfg.source_dirs]
     
     for source_dir in source_dirs:
         if not source_dir.exists():

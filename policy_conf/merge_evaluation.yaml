@@ -1,6 +1,6 @@
 source_dirs:
-  - checkpoint/dp-calvin/logs/RUN1  # Replace with actual directory names or paths
-  - checkpoint/dp-calvin/logs/RUN2
+  - "checkpoint/dp-calvin/logs/2026-04-27_14-57-30"
+  - "checkpoint/dp-calvin/logs/2026-04-27_12-46-28 (999)"
 
 # The parent directory where the new merged directory will be created
 target_parent_dir: checkpoint/dp-calvin/logs
