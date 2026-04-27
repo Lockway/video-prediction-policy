@@ -52,6 +52,9 @@ def main():
 
     updated = False
     for entry in tqdm(metadata_list, desc="Analyzing depth consistency"):
+        if entry.get('success') != 0:
+            continue
+
         if "depth_consistency" in entry and not config.get('overwrite', False):
             continue
             
