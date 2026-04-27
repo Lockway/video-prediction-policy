@@ -2,8 +2,10 @@ import json
 import os
 import shutil
 import time
+import sys
 from pathlib import Path
 import hydra
+from hydra import compose, initialize
 from omegaconf import DictConfig
 from collections import Counter, defaultdict
 import numpy as np
@@ -69,13 +71,12 @@ def merge_results_data(all_data):
         
     return merged
 
-@hydra.main(config_path="../policy_conf", config_name="merge_evaluation")
 def main(cfg: DictConfig):
-    # Use absolute paths or original CWD to avoid Hydra's directory shifting
-    original_cwd = Path(hydra.utils.get_original_cwd())
+    # Use current working directory as we've disabled Hydra's directory shifting
+    cwd = Path.cwd()
     
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-    target_dir = original_cwd / cfg.target_parent_dir / timestamp
+    target_dir = cwd / cfg.target_parent_dir / timestamp
     
     print(f"Creating merged directory at: {target_dir}")
     subfolders = ["rollout", "action", "condition", "latent_fake", "latent_real"]
@@ -85,7 +86,7 @@ def main(cfg: DictConfig):
     merged_metadata = []
     all_results_data = []
     
-    source_dirs = [original_cwd / d for d in cfg.source_dirs]
+    source_dirs = [cwd / d for d in cfg.source_dirs]
     
     for source_dir in source_dirs:
         if not source_dir.exists():
@@ -137,4 +138,6 @@ def main(cfg: DictConfig):
     print(f"Successfully merged {len(source_dirs)} directories into {target_dir}")
 
 if __name__ == "__main__":
-    main()
+    with initialize(config_path="../policy_conf"):
+        cfg = compose(config_name="merge_evaluation", overrides=sys.argv[1:])
+    main(cfg)
