@@ -20,23 +20,33 @@ from datetime import datetime
 logger = get_logger(__name__, log_level="INFO")
 
 class DPODataset(Dataset):
-    def __init__(self, metadata_path):
+    def __init__(self, metadata_path, depth_consistency_threshold=1.0):
         super().__init__()
         with open(metadata_path, 'r') as f:
             self.metadata = json.load(f)
         
-        self.pairs = []
-        for entry in self.metadata:
-            if entry.get('success', 1) == 0:
-                # For failed episodes, we prefer the ground truth (real) over the generated (fake) video
-                self.pairs.append({
-                    'preferred_path': entry['latent_real_path'],
-                    'rejected_path': entry['latent_fake_path'],
-                    'task': entry['task'],
-                    'condition_path': entry['condition_path']
-                })
+        # Filter by success: 0
+        failed_entries = [entry for entry in self.metadata if entry.get('success', 1) == 0]
         
-        print(f"Total DPO pairs found: {len(self.pairs)}")
+        # Sort by depth_consistency descending (highest error first)
+        failed_entries.sort(key=lambda x: x.get('depth_consistency', 0), reverse=True)
+        
+        # Select top percentage
+        num_to_keep = max(1, int(len(failed_entries) * depth_consistency_threshold))
+        selected_entries = failed_entries[:num_to_keep]
+        
+        self.pairs = []
+        for entry in selected_entries:
+            # For failed episodes, we prefer the ground truth (real) over the generated (fake) video
+            self.pairs.append({
+                'preferred_path': entry['latent_real_path'],
+                'rejected_path': entry['latent_fake_path'],
+                'task': entry['task'],
+                'condition_path': entry['condition_path']
+            })
+        
+        print(f"Total failed entries found: {len(failed_entries)}")
+        print(f"Selected DPO pairs (top {depth_consistency_threshold*100}% worst depth consistency): {len(self.pairs)}")
 
     def __len__(self):
         return len(self.pairs)
@@ -125,7 +135,7 @@ def main():
     optimizer = torch.optim.AdamW(unet.parameters(), lr=cfg.learning_rate)
     
     # Dataset
-    dataset = DPODataset(cfg.metadata_path)
+    dataset = DPODataset(cfg.metadata_path, depth_consistency_threshold=cfg.get('depth_consistency_threshold', 1.0))
     dataloader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
     
     unet, optimizer, dataloader = accelerator.prepare(unet, optimizer, dataloader)
