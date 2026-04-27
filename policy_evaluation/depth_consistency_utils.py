@@ -186,18 +186,21 @@ class DepthConsistencyEvaluator:
 
     def evaluate_chunk(self, frames, actions, initial_robot_obs, static_cfg, gripper_cfg):
         """
-        frames: [32, H, W, 3]
-        actions: [10, 7] or [16, 7]
+        frames: [N, H, W*2, 3] (Side-by-side: static left, gripper right)
+        actions: [N-1, 7] or similar
         initial_robot_obs: list of 15 values
         static_cfg, gripper_cfg: dicts with fov, width, height, etc.
         """
-        num_frames = 16
-        static_frames = frames[:num_frames]
-        gripper_frames = frames[num_frames:]
+        num_frames = frames.shape[0]
+        mid_w = frames.shape[2] // 2
+        static_frames = frames[:, :, :mid_w, :]
+        gripper_frames = frames[:, :, mid_w:, :]
         
-        all_depths = self.estimate_depth(frames)
-        static_depths = all_depths[:num_frames]
-        gripper_depths = all_depths[num_frames:]
+        # We need depth for both views
+        # VideoDepthAnything expects [F, H, W, 3]. We can process them separately or together.
+        # Processing separately might be better to avoid blurring across the boundary if the model is not trained on concatenated videos.
+        static_depths = self.estimate_depth(static_frames)
+        gripper_depths = self.estimate_depth(gripper_frames)
         
         K_static = self.get_intrinsic_matrix(static_cfg['fov'], static_cfg['width'], static_cfg['height'])
         K_gripper = self.get_intrinsic_matrix(gripper_cfg['fov'], gripper_cfg['width'], gripper_cfg['height'])

@@ -87,16 +87,29 @@ def main():
             frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         cap.release()
         
-        if len(frames) != 32:
-            print(f"Warning: Expected 32 frames, got {len(frames)} for {video_path}")
+        frames = np.stack(frames) 
+        num_frames = len(frames)
+        H, W, _ = frames[0].shape
+        
+        if W < H * 1.5: # Simple heuristic to check if it's side-by-side (width should be ~2x height)
+            print(f"Warning: Video at {video_path} does not appear to be side-by-side (W={W}, H={H})")
             continue
             
-        frames = np.stack(frames) 
-        
         # Load predicted actions
         actions = torch.load(action_path)
         if isinstance(actions, torch.Tensor):
             actions = actions.squeeze().cpu().numpy()
+        
+        # Actions predicted for next steps. For N frames, we need N-1 actions.
+        # If we have fewer actions, we truncate frames to evaluate only what we can.
+        num_eval_frames = min(num_frames, len(actions) + 1)
+        if num_eval_frames < 2:
+            print(f"Warning: Not enough actions/frames to analyze {video_path}")
+            continue
+            
+        if num_eval_frames < num_frames:
+            # print(f"Note: Truncating evaluation to {num_eval_frames} frames to match {len(actions)} actions.")
+            frames = frames[:num_eval_frames]
         
         # Calculate consistency
         score = evaluator.evaluate_chunk(
