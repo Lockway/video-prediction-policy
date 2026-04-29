@@ -152,13 +152,19 @@ def main():
         accelerator.init_trackers("svd-dpo", config=OmegaConf.to_container(cfg))
 
     global_step = 0
+    scaling_factor = pipeline.vae.config.scaling_factor
+    
     for epoch in range(cfg.epochs):
         unet.train()
         for batch in dataloader:
             with accelerator.accumulate(unet):
                 # Flatten views into batch dimension
-                p_latents = rearrange(batch['preferred_latent'], 'b v f c h w -> (b v) f c h w').to(weight_dtype)
-                r_latents = rearrange(batch['rejected_latent'], 'b v f c h w -> (b v) f c h w').to(weight_dtype)
+                p_latents = rearrange(batch['preferred_latent'], 'b v f c h w -> (b v) f c h w').to(weight_dtype).to(accelerator.device)
+                r_latents = rearrange(batch['rejected_latent'], 'b v f c h w -> (b v) f c h w').to(weight_dtype).to(accelerator.device)
+                
+                # Scale real latents to match the training distribution
+                p_latents = p_latents * scaling_factor
+                
                 texts = []
                 for t in batch['text']:
                     texts.extend([t, t]) # repeat for 2 views
