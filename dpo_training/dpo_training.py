@@ -71,17 +71,23 @@ def get_log_probs(unet, noisy_latents, timesteps, encoder_hidden_states, added_t
     c_skip = 1 / (sigma**2 + 1)
     c_out =  -sigma / (sigma**2 + 1) ** 0.5
     c_in = 1 / (sigma**2 + 1) ** 0.5
-    
-    input_latents = torch.cat([c_in * noisy_latents, repeat(target_latents[:, 0], 'b c h w -> b f c h w', f=target_latents.shape[1]) / pipeline.vae.config.scaling_factor], dim=2)
-    
     c_noise = (sigma.log() / 4).reshape([-1])
+    loss_weight = (sigma ** 2 + 1) / sigma ** 2
+    
+    # Condition on the first frame (unscaled)
+    condition_frame = target_latents[:, 0] / pipeline.vae.config.scaling_factor
+    condition_latent = repeat(condition_frame, 'b c h w -> b f c h w', f=target_latents.shape[1])
+    
+    input_latents = torch.cat([c_in * noisy_latents, condition_latent], dim=2)
+    
     model_pred = unet(input_latents, c_noise, encoder_hidden_states=encoder_hidden_states, added_time_ids=added_time_ids).sample
     
-    target_noise = (noisy_latents - target_latents) / sigma
-    loss = F.mse_loss(model_pred, target_noise, reduction='none')
-    # Sum over dimensions to get "log prob" per sample
-    log_prob = -loss.mean(dim=(1, 2, 3, 4)) 
-    return log_prob
+    # Predict x0 matching SVD training objective
+    predict_x0 = c_out * model_pred + c_skip * noisy_latents 
+    
+    # Log prob is negative weighted MSE
+    loss = ((predict_x0 - target_latents)**2 * loss_weight).mean(dim=(1, 2, 3, 4))
+    return -loss
 
 def main():
     import argparse
@@ -172,8 +178,10 @@ def main():
                 bsz = p_latents.shape[0]
                 device = p_latents.device
                 
-                # Sample timestep and noise (same for p and r)
-                timesteps = torch.exp(torch.randn([bsz], device=device) * 1.2 - 1.2) # Sample sigma
+                # Sample sigma using training distribution (P_mean=0.7, P_std=1.6)
+                rnd_normal = torch.randn([bsz], device=device)
+                timesteps = (rnd_normal * 1.6 + 0.7).exp()
+                
                 noise = torch.randn_like(p_latents)
                 
                 p_noisy = p_latents + noise * timesteps.reshape([-1, 1, 1, 1, 1])
